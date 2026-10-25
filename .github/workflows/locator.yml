@@ -1,0 +1,47 @@
+name: 定位工作台
+on:
+  schedule:
+    - cron: '7,17,27,37,47,57 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: locator-pages
+  cancel-in-progress: false
+jobs:
+  collect-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-cloud.txt
+      - name: 查询并加密
+        run: python cloud/fetch.py
+        env:
+          XM_TOKEN: ${{ secrets.XM_TOKEN }}
+          XM_UID: ${{ secrets.XM_UID }}
+          LOCATOR_PASSWORD: ${{ secrets.LOCATOR_PASSWORD }}
+          LOCATOR_PREVIOUS_PASSWORD: ${{ secrets.LOCATOR_PREVIOUS_PASSWORD }}
+          XM_PLANS: ${{ secrets.XM_PLANS }}
+      - name: 保存加密状态供下次查询使用
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add site/state.enc.json
+          git diff --cached --quiet || git commit -m 'Update encrypted device state'
+          git push
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - name: 发布看板
+        id: deployment
+        uses: actions/deploy-pages@v4
