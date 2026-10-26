@@ -11,6 +11,10 @@ import xiaomi_cloud
 from cloud.crypto_state import encrypt, decrypt
 
 
+class CollectorError(RuntimeError):
+    """Stable, non-sensitive error category safe to show in Actions logs."""
+
+
 def collect(client, previous=None, plans=None, now=None):
     now = now or common.now_utc()
     stamp = common.utc_iso(now)
@@ -31,7 +35,7 @@ def collect(client, previous=None, plans=None, now=None):
     except Exception as exc:
         category = type(exc).__name__
         if not rows:
-            raise RuntimeError("设备列表不可用且没有历史数据（错误类型：%s）；请检查小米 Secrets" % category) from None
+            raise CollectorError("device_list_unavailable:" + category) from None
         state["error"] = "设备列表获取失败（%s），显示历史数据" % category
         for row in rows.values():
             row["query_status"] = "设备列表失败（%s），显示历史数据" % category
@@ -44,7 +48,6 @@ def collect(client, previous=None, plans=None, now=None):
         settings = plans.get("devices", {}).get(did, {})
         row["settings"] = settings
         policy = dict(settings, device_id=did)
-        policy.setdefault("interval_minutes", 10)
         global_plan = plans.get("schedule") or {"enabled": True, "skip_holidays": False,
             "default": {"enabled": True, "start": "00:00", "end": "00:00", "interval_minutes": 10}}
         if not schedule.device_due(policy, global_plan, plans.get("holidays") or {},
@@ -92,7 +95,7 @@ def main():
     required = ("LOCATOR_PASSWORD", "XM_TOKEN", "XM_UID")
     missing = [name for name in required if not os.environ.get(name)]
     if missing:
-        raise RuntimeError("缺少必需的 GitHub Actions Secrets：" + ", ".join(missing))
+        raise CollectorError("missing_required_secrets:" + ",".join(missing))
     password = os.environ["LOCATOR_PASSWORD"]
     target = Path("site/state.enc.json")
     previous = None
@@ -107,11 +110,16 @@ def main():
         reset_unreadable_state = previous is None
         if reset_unreadable_state:
             print("警告：旧加密状态无法解锁；本次将重新采集，旧位置历史不会带入。")
-    plans = json.loads(os.environ.get("XM_PLANS") or "{}")
-    schedule.validate_cloud_plans(plans)
+    try:
+        plans = json.loads(os.environ.get("XM_PLANS") or "{}")
+        schedule.validate_cloud_plans(plans)
+    except Exception as exc:
+        raise CollectorError("invalid_cloud_plans:" + type(exc).__name__) from None
+    if len(password) < 12:
+        raise CollectorError("invalid_locator_password_length")
     result = collect(xiaomi_cloud.Client(os.environ["XM_TOKEN"], os.environ["XM_UID"]), previous, plans)
-    if reset_unreadable_state and not any(row.get("last_point") for row in result.get("devices", [])):
-        raise RuntimeError("旧状态无法解锁，且本次未取得可保存的位置；保留原加密文件并停止发布。")
+    if not any(row.get("last_point") for row in result.get("devices", [])):
+        raise CollectorError("no_usable_location; state file unchanged")
     target.parent.mkdir(exist_ok=True)
     tmp = target.with_suffix(".tmp")
     tmp.write_text(json.dumps(encrypt(result, password)), encoding="utf-8")
@@ -122,6 +130,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        # Exception text may contain API response details; log only its class.
-        print("查询或加密失败（错误类型：%s）；请检查必需 Secrets、计划格式及密码轮换设置。未发布新数据。" % type(exc).__name__, file=sys.stderr)
+        # Never print arbitrary API exception text; show only a stable safe category.
+        category = str(exc) if isinstance(exc, CollectorError) else type(exc).__name__
+        print("查询或加密失败（%s）；请检查必需 Secrets、计划格式及密码轮换设置。未发布新数据。" % category, file=sys.stderr)
         sys.exit(1)
