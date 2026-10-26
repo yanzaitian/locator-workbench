@@ -9,6 +9,9 @@ import common
 import schedule
 import xiaomi_cloud
 from cloud.crypto_state import encrypt, decrypt
+from cloud.plan_store import load_active
+from cloud.mail_import import import_mail
+from cloud.history_reports import enrich_state, summarize_deepseek
 
 
 class CollectorError(RuntimeError):
@@ -111,13 +114,21 @@ def main():
         if reset_unreadable_state:
             print("警告：旧加密状态无法解锁；本次将重新采集，旧位置历史不会带入。")
     try:
-        plans = json.loads(os.environ.get("XM_PLANS") or "{}")
+        plans, revision = load_active(password, os.environ.get("LOCATOR_PREVIOUS_PASSWORD"))
+        if plans is None:
+            plans = json.loads(os.environ.get("XM_PLANS") or "{}")
         schedule.validate_cloud_plans(plans)
     except Exception as exc:
         raise CollectorError("invalid_cloud_plans:" + type(exc).__name__) from None
     if len(password) < 12:
         raise CollectorError("invalid_locator_password_length")
     result = collect(xiaomi_cloud.Client(os.environ["XM_TOKEN"], os.environ["XM_UID"]), previous, plans)
+    result["plan"]["devices"] = copy.deepcopy(plans.get("devices") or {})
+    result["plan_request_id"] = revision
+    mail_config = json.loads(os.environ.get("XM_MAIL_CONFIG") or "{}")
+    result = import_mail(result, mail_config)
+    result = enrich_state(result, deepseek_key=os.environ.get("DEEPSEEK_API_KEY"),
+                          summarizer=summarize_deepseek)
     if not any(row.get("last_point") for row in result.get("devices", [])):
         raise CollectorError("no_usable_location; state file unchanged")
     target.parent.mkdir(exist_ok=True)

@@ -1,0 +1,28 @@
+/* Scoped to the optional management mount; follows existing dark device cards. */
+.management { margin-top:26px; color:#e9eef7; }
+.management > .device { margin-bottom:20px; }
+.management summary { cursor:pointer; font-size:20px; font-weight:600; padding:2px 0; }
+.management summary:focus-visible,.management button:focus-visible,.management input:focus-visible,.management select:focus-visible { outline:2px solid #72c7ff; outline-offset:3px; }
+.management .management-form { max-width:none; margin:18px 0 0; padding:0; border:0; border-radius:0; background:transparent; }
+.management .management-form p { line-height:1.65; margin:12px 0; }
+.management-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px 18px; align-items:end; }
+.management .management-field { display:flex; flex-direction:column; gap:8px; margin:0 0 12px; min-width:0; font-size:14px; }
+.management input,.management select { box-sizing:border-box; width:100%; min-width:0; font:inherit; border:1px solid #32465f; color:#e9eef7; background:#172438; border-radius:8px; padding:10px 13px; color-scheme:dark; }
+.management .management-field:has(input[type=checkbox]) { flex-direction:row-reverse; justify-content:flex-end; align-items:center; min-height:42px; }
+.management input[type=checkbox] { width:18px; height:18px; flex:0 0 18px; accent-color:#45b78a; }
+.management input:disabled { opacity:.55; }
+.management .management-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.management .management-actions button { width:auto; margin:0; }
+.management button { font:inherit; padding:10px 13px; border:1px solid #32465f; border-radius:8px; color:#e9eef7; background:#172438; cursor:pointer; }
+.management button:hover { background:#223550; }
+.management button.primary { background:#2c79b9; border-color:#4b9cda; }
+.management button:disabled { opacity:.55; cursor:wait; }
+.management-status { color:#bdd0e8; overflow-wrap:anywhere; }
+.management-reports > h2 { margin:24px 0 12px; font-size:20px; }
+.management-report { margin-bottom:14px; }
+.management-report > p { margin:12px 0; font-size:13px; }
+.management-markdown { white-space:pre-wrap; overflow-wrap:anywhere; background:#0d1725; border:1px solid #26374e; border-radius:7px; padding:16px; margin:12px 0; max-height:560px; overflow:auto; line-height:1.7; font:14px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace; }
+.management-mail h2 { font-size:18px; margin-bottom:12px; }
+.management-mail p { color:#91a2b9; line-height:1.65; }
+.management-mail .fact span { display:block; color:#8195ae; font-size:12px; margin-bottom:4px; }
+@media(max-width:700px) { .management-grid { grid-template-columns:1fr; gap:0; } .management .management-actions button { flex:1 1 150px; } .management .device { padding:16px; } }

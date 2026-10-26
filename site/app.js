@@ -1,7 +1,9 @@
+import {createManagement} from './management.js';
 import {decryptState} from './crypto.js';
 import {devicePlanSummary,globalScheduleSummary} from './plan-summary.js';
 const $=s=>document.querySelector(s);
 let password='',state=null,sessionVersion=0,requestVersion=0;
+const management=createManagement({getState:()=>state,getPassword:()=>password,onRefresh:refresh});
 const date=s=>s?new Date(s).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'未知';
 const age=s=>s?Math.max(0,Date.now()-Date.parse(s)):Infinity;
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -13,12 +15,13 @@ function render(){
  $('#summary').innerHTML=[['设备总数',devices.length],['已有位置',located],['查询异常',failures],['数据状态',stale?'需检查':'正常']].map(x=>`<div class="metric"><strong>${x[1]}</strong><span>${x[0]}</span></div>`).join('');
  const scheduleSummary=$('#schedule-summary');scheduleSummary.textContent=globalScheduleSummary(state.plan?.schedule,state.plan?.holidays);scheduleSummary.hidden=false;
  $('#cards').replaceChildren();
- for(const d of devices){const pt=d.last_point,missing=d.listed_at!==state.updated,old=pt&&age(pt.ts)>3600000,problem=missing||old||/失败/.test(d.query_status||'');const c=document.createElement('article');c.className='device '+(problem?'warn':'ok');
+ for(const d of devices){const pt=d.last_point,missing=!d.device_id.startsWith('mail:')&&d.listed_at!==state.updated,old=pt&&age(pt.ts)>3600000,problem=missing||old||/失败/.test(d.query_status||'');const c=document.createElement('article');c.className='device '+(problem?'warn':'ok');
  const h=document.createElement('h3');h.textContent=d.name||d.device_id;c.append(h);const tag=document.createElement('span');tag.className='tag';tag.textContent=d.online===true||d.online===1?'在线':d.online===false||d.online===0?'离线':'状态未知';c.append(tag);
  const status=d.query_status||'尚未查询';const address=d.address||pt?.address||'';c.insertAdjacentHTML('beforeend','<div class="facts">'+fact('本次查询',date(d.last_query))+fact('位置时间',pt?date(pt.ts):'暂无有效位置')+fact('电量',d.battery==null?'未知':d.battery+'%')+fact('精度',pt&&pt.acc!=null?Math.round(pt.acc)+' 米':'未知')+fact('地址',address||'暂无地址')+'</div>');
  const psummary=document.createElement('p');psummary.className='plan-summary';psummary.textContent=`计划：${devicePlanSummary(d.settings||{},state.plan?.schedule,state.plan?.holidays)}`;c.append(psummary);
  if(missing){const p=document.createElement('p');p.className='warn-text device-note';p.textContent='本次设备列表未找到，当前显示历史数据';c.append(p)}else if(old){const p=document.createElement('p');p.className='warn-text device-note';p.textContent='位置超过 1 小时，不能视为实时位置';c.append(p)}if(status){const p=document.createElement('p');p.className=/失败/.test(status)?'warn-text device-note':'muted device-note';p.textContent=status;c.append(p)}
  const foot=document.createElement('div');foot.className='device-foot';if(pt){const a=document.createElement('a');a.textContent='打开高德地图';a.target='_blank';a.rel='noopener noreferrer';a.href='https://uri.amap.com/marker?position='+encodeURIComponent(pt.gcj_lon+','+pt.gcj_lat)+'&name='+encodeURIComponent(d.name||d.device_id);foot.append(a)}else foot.append(document.createTextNode('暂无地图位置'));c.append(foot);$('#cards').append(c);}
+ management.render();
  if(!devices.length)$('#cards').innerHTML='<div class="empty">暂无设备数据。请先运行一次 GitHub Actions。</div>';
 }
 function classifyLoadError(error){
@@ -67,7 +70,7 @@ $('#unlock').onsubmit=async e=>{
 };
 $('#refresh').onclick=refresh;
 $('#lock').onclick=()=>{
- sessionVersion++;requestVersion++;$('#unlock button').disabled=false;password='';state=null;
+ management.lock();sessionVersion++;requestVersion++;$('#unlock button').disabled=false;password='';state=null;
  $('#cards').replaceChildren();$('#summary').replaceChildren();$('#summary').hidden=true;$('#schedule-summary').textContent='';$('#schedule-summary').hidden=true;$('#device-section').hidden=true;$('#tools').hidden=true;
  $('#updated').textContent='';$('#status').textContent='';$('#status').className='status';$('#status').hidden=true;
  $('#unlock').hidden=false;$('#password').value='';$('#plantext').value='';$('#planerror').textContent='';if($('#editor').open)$('#editor').close();
