@@ -24,6 +24,8 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -r requirements-cloud.txt
       - name: 查询并加密
+        id: collect
+        continue-on-error: true
         run: python cloud/fetch.py
         env:
           XM_TOKEN: ${{ secrets.XM_TOKEN }}
@@ -32,6 +34,7 @@ jobs:
           LOCATOR_PREVIOUS_PASSWORD: ${{ secrets.LOCATOR_PREVIOUS_PASSWORD }}
           XM_PLANS: ${{ secrets.XM_PLANS }}
       - name: 保存加密状态供下次查询使用
+        if: ${{ steps.collect.outcome == 'success' }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -39,9 +42,19 @@ jobs:
           git diff --cached --quiet || git commit -m 'Update encrypted device state'
           git push
       - uses: actions/configure-pages@v5
+        id: configure_pages
+        if: ${{ !cancelled() }}
       - uses: actions/upload-pages-artifact@v3
+        id: upload_pages
+        if: ${{ !cancelled() && steps.configure_pages.outcome == 'success' }}
         with:
           path: site
       - name: 发布看板
         id: deployment
+        if: ${{ !cancelled() && steps.upload_pages.outcome == 'success' }}
         uses: actions/deploy-pages@v4
+      - name: 报告采集失败
+        if: ${{ always() && steps.collect.outcome == 'failure' }}
+        run: |
+          echo '::error::云端采集失败，已尝试发布现有静态看板；历史加密状态未更新。请检查采集日志及小米凭据。'
+          exit 1
