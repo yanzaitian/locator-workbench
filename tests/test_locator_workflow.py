@@ -64,3 +64,13 @@ def test_encrypted_plan_dispatch_inputs_are_declared_and_never_interpolated_in_s
     assert "git add cloud/plans.enc.json" in plan
     run = plan.split("        env:")[0]
     assert "inputs.payload" not in run
+
+
+def test_published_fallback_cannot_report_a_healthy_workflow():
+    configured = steps()
+    health = next(s for s in configured if field(s, "run") == "python cloud/health_check.py")
+    assert field(health, "if") == "${{ !cancelled() && steps.collect.outcome == 'success' && steps.deployment.outcome == 'success' }}"
+    assert field(health, "continue-on-error") is None
+    assert "LOCATOR_PASSWORD: ${{ secrets.LOCATOR_PASSWORD }}" in health
+    deployment = next(s for s in configured if field(s, "id") == "deployment")
+    assert configured.index(health) > configured.index(deployment)
