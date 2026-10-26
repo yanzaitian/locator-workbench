@@ -6,12 +6,15 @@ import math
 import os
 import socket
 import uuid
+import tempfile
+import threading
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.environ.get("WORKBENCH_CONFIG") or os.path.join(BASE_DIR, "config.json")
 
 DEFAULTS = {
     "server": {"host": "0.0.0.0", "port": 8765, "open_browser": True},
+    "auth": {"password_hash": ""},
     "data_dir": "",
     "access_token": "",
     "imap": {
@@ -85,9 +88,24 @@ def load_config():
     return cfg
 
 
+_CONFIG_WRITE_LOCK = threading.RLock()
+
+
 def save_config(cfg):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    # Replace atomically so a failed write cannot leave a truncated password hash.
+    with _CONFIG_WRITE_LOCK:
+        parent = os.path.dirname(os.path.abspath(CONFIG_PATH))
+        os.makedirs(parent, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=".workbench-", suffix=".tmp", dir=parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, CONFIG_PATH)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
 
 def db_path(cfg):
