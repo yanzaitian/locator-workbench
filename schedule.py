@@ -169,8 +169,16 @@ def validate_schedule(value, minimum=5):
     return normalize(value)
 
 
-def validate_cloud_plans(value):
+def _parse_device_plan(raw):
     import json
+    if isinstance(raw, str):
+        raw = json.loads(raw) if raw.strip() else None
+    if raw is not None and not isinstance(raw, dict):
+        raise ValueError("设备独立计划必须是对象")
+    return raw
+
+
+def validate_cloud_plans(value):
     if not isinstance(value, dict) or not isinstance(value.get("devices", {}), dict):
         raise ValueError("计划必须包含devices对象")
     if "schedule" in value:
@@ -182,9 +190,9 @@ def validate_cloud_plans(value):
             raise ValueError("enabled 必须为布尔值")
         if "interval_minutes" in device and (type(device["interval_minutes"]) is not int or not 10 <= device["interval_minutes"] <= 10080):
             raise ValueError("云端间隔须为10至10080分钟")
-        plan = device.get("plan_json")
+        plan = _parse_device_plan(device.get("plan_json"))
         if plan:
-            validate_schedule(json.loads(plan) if isinstance(plan, str) else plan, 10)
+            validate_schedule(plan, 10)
     holidays = value.get("holidays", {})
     if not isinstance(holidays, dict):
         raise ValueError("holidays须为对象")
@@ -197,14 +205,18 @@ def validate_cloud_plans(value):
     return value
 
 
+def _device_schedule(device, global_plan):
+    """空对象、空 JSON 对象和空字符串均表示继承全局计划。"""
+    raw = _parse_device_plan(device.get("plan_json"))
+    has_independent = bool(raw)
+    return (raw if has_independent else global_plan or {}), has_independent
+
+
 def device_due(device, global_plan, holidays, last_query=None, now=None, minimum=5):
     """跨午夜窗口归属开始日；独立计划覆盖全局，设备开关始终生效。"""
-    import json
     if not device.get("enabled", True):
         return False
-    raw = device.get("plan_json")
-    sched = json.loads(raw) if isinstance(raw, str) and raw else raw
-    sched = sched or global_plan
+    sched, has_independent = _device_schedule(device, global_plan)
     now = now or common.now_utc()
     local = common.to_local(now)
     if not sched.get("enabled", True):
@@ -222,6 +234,6 @@ def device_due(device, global_plan, holidays, last_query=None, now=None, minimum
             active = previous
     if not active:
         return False
-    interval = max(minimum, int(active["interval_minutes"]) if raw else int(device.get("interval_minutes") or active["interval_minutes"]))
+    interval = max(minimum, int(active["interval_minutes"]) if has_independent else int(device.get("interval_minutes") or active["interval_minutes"]))
     last = common.parse_time(last_query) if last_query else None
     return not last or (now - last).total_seconds() >= interval * 60
