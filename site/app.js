@@ -24,7 +24,7 @@ function render(){
 function classifyLoadError(error){
  switch(error?.kind){
   case 'network':return '无法连接云端：请检查网络后重试。';
-  case 'missing':return '云端尚无加密状态文件：请等待首次 GitHub Actions 采集并发布完成。';
+  case 'missing':return '云端尚未生成定位数据：需管理员检查 GitHub Actions 运行结果及小米凭据，采集并发布成功后再重试。';
   case 'http':return `云端读取失败（HTTP ${error.status}）：请稍后重试或检查 Pages 发布状态。`;
   case 'json':return '云端状态文件不是有效 JSON：请检查最近一次 Actions 发布。';
   case 'decrypt':return '无法解密状态：密码不正确，或云端加密数据损坏/版本不兼容。';
