@@ -148,8 +148,9 @@ export function createManagement({getState,getPassword,onRefresh}) {
  }
  function createUI() {
   root.classList.add('management'); root.hidden = false;
-  const section = el('details',null,'device management-plans');
-  section.append(el('summary','计划管理'));
+  const section = el('section',null,'management-page management-plans');
+  section.id = 'view-plans'; section.setAttribute('data-view-panel','plans');
+  section.append(el('h2','采集计划'));
   const form = el('form',null,'management-form');
   const pick = el('label',null,'management-field'); pick.append(el('span','选择设备'));
   const device = el('select'); device.setAttribute('aria-label','选择设备'); pick.append(device);
@@ -171,10 +172,19 @@ export function createManagement({getState,getPassword,onRefresh}) {
   const authActions = el('div',null,'management-actions'); authActions.append(restore,forget);
   const status = el('p',null,'management-status'), formError = el('p',null,'warn-text');
   status.setAttribute('role','status'); status.setAttribute('aria-live','polite');
-  form.append(grid,note,formError,auth.wrap,el('p','授权仅用于当前页面向 GitHub 提交工作流。Token 需要目标仓库的 Actions 写入权限；授权到期须重新输入。访问密码不会存储。','muted'),remember.wrap,authActions,actions,status);
+  form.append(grid,note,formError,actions,status);
   section.append(form);
-  const reports = el('section',null,'management-reports'), mail = el('section',null,'device management-mail');
-  root.replaceChildren(section,reports,mail);
+  const reports = el('section',null,'management-page management-reports');
+  reports.id = 'view-reports'; reports.setAttribute('data-view-panel','reports');
+  const settings = el('section',null,'management-page management-settings');
+  settings.id = 'view-settings'; settings.setAttribute('data-view-panel','settings');
+  settings.append(el('h2','系统设置'));
+  const settingsCard = el('div',null,'settings-card');
+  settingsCard.append(el('h3','GitHub 计划发布授权'),el('p','授权仅用于本页面向 GitHub 提交加密计划。需要仓库 Actions 写入权限；授权到期须重新输入。访问密码不会存储。'),auth.wrap,remember.wrap,authActions);
+  settings.append(settingsCard);
+  const mail = el('section',null,'device management-mail settings-card');
+  settings.append(mail);
+  root.replaceChildren(section,reports,settings);
   ui = {section,form,device,enabled:enabled.input,inherit:inherit.input,start:start.input,end:end.input,interval:interval.input,token:auth.input,remember:remember.input,save,refresh,reset,restore,forget,status,formError,reports,mail};
   device.onchange = loadDevice;
   for (const key of ['enabled','inherit','start','end','interval']) ui[key].oninput = () => record(key);

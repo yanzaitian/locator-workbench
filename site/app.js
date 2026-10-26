@@ -2,7 +2,18 @@ import {createManagement} from './management.js';
 import {decryptState} from './crypto.js';
 import {devicePlanSummary,globalScheduleSummary} from './plan-summary.js';
 const $=s=>document.querySelector(s);
-let password='',state=null,sessionVersion=0,requestVersion=0;
+function showView(name){
+ const panels=[...(document.querySelectorAll?.('[data-view-panel]')||[])];
+ if(!panels.some(panel=>panel.getAttribute('data-view-panel')===name))return;
+ for(const panel of panels)panel.hidden=panel.getAttribute('data-view-panel')!==name;
+ for(const button of document.querySelectorAll?.('[data-view]')||[]){
+  const active=button.getAttribute('data-view')===name;
+  button.classList.toggle('active',active);button.setAttribute('aria-current',active?'page':'false');
+ }
+ currentView=name;
+}
+for(const button of document.querySelectorAll?.('[data-view]')||[])button.onclick=()=>showView(button.getAttribute('data-view'));
+let password='',state=null,sessionVersion=0,requestVersion=0,currentView='overview';
 const management=createManagement({getState:()=>state,getPassword:()=>password,onRefresh:refresh});
 const date=s=>s?new Date(s).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'未知';
 const age=s=>s?Math.max(0,Date.now()-Date.parse(s)):Infinity;
@@ -10,7 +21,7 @@ const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;
 function fact(label,value){return `<div class="fact"><label>${esc(label)}</label><b>${esc(value)}</b></div>`;}
 function render(){
  const devices=state.devices||[], stale=age(state.updated)>30*60000, located=devices.filter(d=>d.last_point).length, failures=devices.filter(d=>d.query_status&&/失败|未找到/.test(d.query_status)).length;
- $('#unlock').hidden=true;$('#tools').hidden=false;$('#status').hidden=false;$('#summary').hidden=false;$('#device-section').hidden=false;
+ $('#unlock').hidden=true;$('#overview').hidden=false;$('#tools').hidden=false;$('#primary-navigation').hidden=false;$('#status').hidden=false;$('#summary').hidden=false;$('#device-section').hidden=false;
  $('#status').textContent='数据更新时间：'+date(state.updated)+(stale?'。超过 30 分钟未更新，请检查 Actions。':'')+(state.error?'。'+state.error:'');$('#status').className='status'+(stale||state.error?' warn':'');$('#updated').textContent='最后更新 '+date(state.updated);
  $('#summary').innerHTML=[['设备总数',devices.length],['已有位置',located],['查询异常',failures],['数据状态',stale?'需检查':'正常']].map(x=>`<div class="metric"><strong>${x[1]}</strong><span>${x[0]}</span></div>`).join('');
  const scheduleSummary=$('#schedule-summary');scheduleSummary.textContent=globalScheduleSummary(state.plan?.schedule,state.plan?.holidays);scheduleSummary.hidden=false;
@@ -21,7 +32,7 @@ function render(){
  const psummary=document.createElement('p');psummary.className='plan-summary';psummary.textContent=`计划：${devicePlanSummary(d.settings||{},state.plan?.schedule,state.plan?.holidays)}`;c.append(psummary);
  if(missing){const p=document.createElement('p');p.className='warn-text device-note';p.textContent='本次设备列表未找到，当前显示历史数据';c.append(p)}else if(old){const p=document.createElement('p');p.className='warn-text device-note';p.textContent='位置超过 1 小时，不能视为实时位置';c.append(p)}if(status){const p=document.createElement('p');p.className=/失败/.test(status)?'warn-text device-note':'muted device-note';p.textContent=status;c.append(p)}
  const foot=document.createElement('div');foot.className='device-foot';if(pt){const a=document.createElement('a');a.textContent='打开高德地图';a.target='_blank';a.rel='noopener noreferrer';a.href='https://uri.amap.com/marker?position='+encodeURIComponent(pt.gcj_lon+','+pt.gcj_lat)+'&name='+encodeURIComponent(d.name||d.device_id);foot.append(a)}else foot.append(document.createTextNode('暂无地图位置'));c.append(foot);$('#cards').append(c);}
- management.render();
+ management.render();showView(currentView);
  if(!devices.length)$('#cards').innerHTML='<div class="empty">暂无设备数据。请先运行一次 GitHub Actions。</div>';
 }
 function classifyLoadError(error){
@@ -71,6 +82,7 @@ $('#unlock').onsubmit=async e=>{
 $('#refresh').onclick=refresh;
 $('#lock').onclick=()=>{
  management.lock();sessionVersion++;requestVersion++;$('#unlock button').disabled=false;password='';state=null;
+ $('#primary-navigation').hidden=true;$('#overview').hidden=true;for(const panel of document.querySelectorAll?.('[data-view-panel]')||[])panel.hidden=true;for(const button of document.querySelectorAll?.('[data-view]')||[]){const active=button.getAttribute('data-view')==='overview';button.classList.toggle('active',active);button.setAttribute('aria-current',active?'page':'false');}currentView='overview';
  $('#cards').replaceChildren();$('#summary').replaceChildren();$('#summary').hidden=true;$('#schedule-summary').textContent='';$('#schedule-summary').hidden=true;$('#device-section').hidden=true;$('#tools').hidden=true;
  $('#updated').textContent='';$('#status').textContent='';$('#status').className='status';$('#status').hidden=true;
  $('#unlock').hidden=false;$('#password').value='';$('#plantext').value='';$('#planerror').textContent='';if($('#editor').open)$('#editor').close();
