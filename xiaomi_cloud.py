@@ -16,6 +16,33 @@ class XiaomiError(Exception):
     pass
 
 
+_DEVICE_LIST_CATEGORIES = frozenset({
+    "http_non_200", "non_json", "api_rejected", "invalid_structure",
+    "network_error", "empty_list", "unexpected_error",
+})
+
+
+class DeviceListError(XiaomiError):
+    """Device-list diagnostics contain only fixed categories and HTTP integers."""
+
+    def __init__(self, category, http_status=None):
+        self.category = (category if type(category) is str and
+                         category in _DEVICE_LIST_CATEGORIES else "unexpected_error")
+        self.http_status = (http_status if type(http_status) is int and
+                            100 <= http_status <= 599 else None)
+        diagnostic = self.category
+        if self.http_status is not None:
+            diagnostic += ":http_status=%d" % self.http_status
+        super().__init__(diagnostic)
+
+
+def device_list_diagnostic(error):
+    """Revalidate structured fields; never forward exception text or class names."""
+    if isinstance(error, DeviceListError):
+        return str(DeviceListError(error.category, error.http_status))
+    return "unexpected_error"
+
+
 def _ts():
     return int(time.time() * 1000)
 
@@ -127,15 +154,31 @@ class Client:
         return {"Cookie": "userId=%s;serviceToken=%s" % (self.user_id, self.token)}
 
     def device_list(self):
-        r = self.session.get("https://i.mi.com/find/v3/device/status/list",
-                             headers=self._headers(), params={"ts": _ts()}, timeout=30)
-        data = r.json() if r.status_code == 200 else {}
-        if data.get("result") != "ok":
-            raise XiaomiError("设备列表获取失败，请检查登录凭据")
-        raw = data.get("data") or {}
-        rows = raw if isinstance(raw, list) else raw.get("deviceList")
-        if not isinstance(rows, list):
-            raise XiaomiError("设备列表格式错误")
+        try:
+            r = self.session.get("https://i.mi.com/find/v3/device/status/list",
+                                 headers=self._headers(), params={"ts": _ts()}, timeout=30)
+        except requests.RequestException:
+            # Request exceptions can contain URLs, cookies or response text.
+            raise DeviceListError("network_error") from None
+        status = r.status_code
+        if type(status) is not int or not 100 <= status <= 599:
+            raise DeviceListError("invalid_structure") from None
+        if status != 200:
+            raise DeviceListError("http_non_200", status) from None
+        try:
+            data = r.json()
+        except ValueError:
+            raise DeviceListError("non_json", status) from None
+        if not isinstance(data, dict) or not isinstance(data.get("result"), str):
+            raise DeviceListError("invalid_structure", status) from None
+        if data["result"] != "ok":
+            # Do not include result, API codes, messages, or redirect URLs.
+            raise DeviceListError("api_rejected", status) from None
+        raw = data.get("data")
+        rows = raw if isinstance(raw, list) else (
+            raw.get("deviceList") if isinstance(raw, dict) else None)
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise DeviceListError("invalid_structure", status) from None
         return rows
 
     def device_status(self, device, sync_mode=0):
