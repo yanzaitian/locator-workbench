@@ -17,6 +17,7 @@ REQUIRED_SECRETS = {"LOCATOR_PASSWORD", "XM_TOKEN", "XM_UID"}
 UPLOAD = [
     "requirements-cloud.txt",
     "cloud/fetch.py",
+    "cloud/health_check.py",
     "cloud/plan_store.py",
     "cloud/history_reports.py",
     "cloud/mail_import.py",
