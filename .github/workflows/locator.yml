@@ -76,6 +76,11 @@ jobs:
         id: deployment
         if: ${{ !cancelled() && steps.upload_pages.outcome == 'success' }}
         uses: actions/deploy-pages@v4
+      - name: 验证发布数据健康状态
+        if: ${{ !cancelled() && steps.collect.outcome == 'success' && steps.deployment.outcome == 'success' }}
+        run: python cloud/health_check.py
+        env:
+          LOCATOR_PASSWORD: ${{ secrets.LOCATOR_PASSWORD }}
       - name: 报告采集失败
         if: ${{ always() && steps.collect.outcome == 'failure' }}
         run: |
