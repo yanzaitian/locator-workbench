@@ -31,9 +31,9 @@ def collect(client, previous=None, plans=None, now=None):
     try:
         listed = client.device_list()
         if not listed:
-            raise ValueError("empty list")
+            raise xiaomi_cloud.DeviceListError("empty_list")
     except Exception as exc:
-        category = type(exc).__name__
+        category = xiaomi_cloud.device_list_diagnostic(exc)
         if not rows:
             raise CollectorError("device_list_unavailable:" + category) from None
         state["error"] = "设备列表获取失败（%s），显示历史数据" % category
