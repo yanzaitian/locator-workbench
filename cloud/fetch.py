@@ -28,12 +28,13 @@ def collect(client, previous=None, plans=None, now=None):
         listed = client.device_list()
         if not listed:
             raise ValueError("empty list")
-    except Exception:
+    except Exception as exc:
+        category = type(exc).__name__
         if not rows:
-            raise RuntimeError("设备列表不可用且没有历史数据；请检查小米 Secrets") from None
-        state["error"] = "设备列表获取失败，请检查小米凭据；保留上次位置"
+            raise RuntimeError("设备列表不可用且没有历史数据（错误类型：%s）；请检查小米 Secrets" % category) from None
+        state["error"] = "设备列表获取失败（%s），显示历史数据" % category
         for row in rows.values():
-            row["query_status"] = "设备列表失败，显示历史数据"
+            row["query_status"] = "设备列表失败（%s），显示历史数据" % category
         return state
     for device in listed:
         meta = xiaomi_cloud.device_meta(device)
@@ -65,32 +66,52 @@ def collect(client, previous=None, plans=None, now=None):
                 row["query_status"] = "查询成功"
             else:
                 row["query_status"] = "暂无新位置，保留上次位置"
-        except Exception:
-            row["query_status"] = "本次查询失败，保留上次位置"
+        except Exception as exc:
+            row["query_status"] = "本次查询失败（%s），保留上次位置" % type(exc).__name__
     state["devices"] = list(rows.values())
     return state
 
 
 def read_previous(envelope, password, previous_password=None):
-    try:
-        return decrypt(envelope, password)
-    except Exception:
-        if not previous_password:
-            raise
-        return decrypt(envelope, previous_password)
+    """Try the active and optional previous password; return None if neither works."""
+    candidates = [password]
+    if previous_password and previous_password != password:
+        candidates.append(previous_password)
+    for candidate in candidates:
+        try:
+            return decrypt(envelope, candidate)
+        except Exception:
+            # A rotated password or stale/corrupt state must not permanently
+            # block collection. main() will only replace it after fresh data
+            # has been collected successfully.
+            continue
+    return None
 
 
 def main():
+    required = ("LOCATOR_PASSWORD", "XM_TOKEN", "XM_UID")
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        raise RuntimeError("缺少必需的 GitHub Actions Secrets：" + ", ".join(missing))
     password = os.environ["LOCATOR_PASSWORD"]
     target = Path("site/state.enc.json")
     previous = None
+    reset_unreadable_state = False
     if target.exists():
-        # Password changes require LOCATOR_PREVIOUS_PASSWORD for one successful run.
-        previous = read_previous(json.loads(target.read_text(encoding="utf-8")), password,
+        try:
+            envelope = json.loads(target.read_text(encoding="utf-8"))
+        except Exception:
+            envelope = None
+        previous = read_previous(envelope, password,
                                  os.environ.get("LOCATOR_PREVIOUS_PASSWORD"))
+        reset_unreadable_state = previous is None
+        if reset_unreadable_state:
+            print("警告：旧加密状态无法解锁；本次将重新采集，旧位置历史不会带入。")
     plans = json.loads(os.environ.get("XM_PLANS") or "{}")
     schedule.validate_cloud_plans(plans)
     result = collect(xiaomi_cloud.Client(os.environ["XM_TOKEN"], os.environ["XM_UID"]), previous, plans)
+    if reset_unreadable_state and not any(row.get("last_point") for row in result.get("devices", [])):
+        raise RuntimeError("旧状态无法解锁，且本次未取得可保存的位置；保留原加密文件并停止发布。")
     target.parent.mkdir(exist_ok=True)
     tmp = target.with_suffix(".tmp")
     tmp.write_text(json.dumps(encrypt(result, password)), encoding="utf-8")
@@ -100,6 +121,7 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except Exception:
-        print("查询或加密失败；请检查 Secrets、计划格式及密码轮换设置。未发布新数据。", file=sys.stderr)
+    except Exception as exc:
+        # Exception text may contain API response details; log only its class.
+        print("查询或加密失败（错误类型：%s）；请检查必需 Secrets、计划格式及密码轮换设置。未发布新数据。" % type(exc).__name__, file=sys.stderr)
         sys.exit(1)
