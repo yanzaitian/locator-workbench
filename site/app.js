@@ -20,19 +20,31 @@ const age=s=>{const time=Date.parse(s);return Number.isFinite(time)?Math.max(0,D
 const ageLabel=s=>{const elapsed=age(s);return Number.isFinite(elapsed)?`${Math.floor(elapsed/60000)} 分钟前`:'时间未知';};
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function fact(label,value){return `<div class="fact${label==='地址'?' fact-wide':''}"><label>${esc(label)}</label><b>${esc(value)}</b></div>`;}
+function deviceDetails(d, stamp) {
+ const pt=d.last_point, details=document.createElement('details');details.className='device-inspector';details.setAttribute('data-device-id',d.device_id);
+ const heading=document.createElement('summary');heading.textContent='查看设备详情与采集说明';details.append(heading);
+ const body=document.createElement('div');body.className='inspector-body';
+ const listed=!!stamp&&d.listed_at===stamp;
+ const rows=[['设备标识',d.device_id],['数据来源',d.device_id.startsWith('mail:')?'邮件导入':'小米云服务'],['设备列表核验',listed?'本次设备列表已确认':'未在本次列表确认，可能为历史数据'],['最近列表确认',date(d.listed_at)],['最近查询尝试',date(d.last_query)],['查询结果',d.query_status||'尚未查询'],['最后位置采样',pt?date(pt.ts):'暂无有效位置'],['位置距今',pt?ageLabel(pt.ts):'未知'],['状态说明','在线状态、电量和地址是最近保存的结果，并非实时连接'],['轨迹与月报','月度报告展示已积累的采样统计；当前卡片仅展示最后位置']];
+ body.insertAdjacentHTML('beforeend','<div class="detail-facts">'+rows.map(([label,value])=>fact(label,value)).join('')+'</div>');
+ const guide=document.createElement('p');guide.className='muted';guide.textContent='查询失败时请前往「系统设置 → 小米定位采集授权」。刷新数据只读取已发布结果，不会立即向手机发起定位。所有时间按北京时间显示。';body.append(guide);
+ details.append(body);return details;
+}
 function render(){
  const updatedKnown=Number.isFinite(Date.parse(state.updated)), devices=state.devices||[], stale=!updatedKnown||age(state.updated)>30*60000, located=devices.filter(d=>d.last_point).length, failures=devices.filter(d=>d.query_status&&/失败|未找到/.test(d.query_status)).length;
  $('#unlock').hidden=true;$('#overview').hidden=false;$('#tools').hidden=false;$('#primary-navigation').hidden=false;$('#sidebar').setAttribute('data-locked','false');$('#status').hidden=false;$('#summary').hidden=false;$('#device-section').hidden=false;
  $('#status').textContent='数据更新时间：'+date(state.updated)+(stale?(updatedKnown?'。超过 30 分钟未更新，请检查 Actions。':'。更新时间缺失或格式无效，请检查 Actions。'):'')+(state.error?'。'+state.error:'');$('#status').className='status'+(stale||state.error?' warn':'');$('#updated').textContent=updatedKnown?'最后更新 '+date(state.updated):'最后更新时间未知';
+ if(state.error){const help=document.createElement('button');help.type='button';help.className='button button-secondary connection-shortcut';help.textContent='查看连接状态与授权步骤';help.onclick=()=>showView('settings');$('#status').append(help);}
  $('#summary').innerHTML=[['设备总数',devices.length],['已有位置',located],['查询异常',failures],['数据状态',stale||state.error||failures?'需检查':'正常']].map(x=>`<div class="metric"><strong>${x[1]}</strong><span>${x[0]}</span></div>`).join('');
  const scheduleSummary=$('#schedule-summary');scheduleSummary.textContent=globalScheduleSummary(state.plan?.schedule,state.plan?.holidays);scheduleSummary.hidden=false;
+ const openDetails=new Set([...(document.querySelectorAll?.('.device-inspector[open]')||[])].map(node=>node.getAttribute('data-device-id')));
  $('#cards').replaceChildren();
  for(const d of devices){const pt=d.last_point,missing=!d.device_id.startsWith('mail:')&&d.listed_at!==state.updated,old=pt&&age(pt.ts)>3600000,problem=missing||old||/失败/.test(d.query_status||'');const c=document.createElement('article');c.className='device '+(problem?'warn':'ok');
  const h=document.createElement('h3');h.textContent=d.name||d.device_id;c.append(h);const tag=document.createElement('span');tag.className='tag';tag.textContent=d.online===true||d.online===1?'在线':d.online===false||d.online===0?'离线':'状态未知';c.append(tag);
  const status=d.query_status||'尚未查询';const address=d.address||pt?.address||'';c.insertAdjacentHTML('beforeend','<div class="facts">'+fact('本次查询',date(d.last_query))+fact('位置时间',pt?date(pt.ts):'暂无有效位置')+fact('电量',d.battery==null?'未知':d.battery+'%')+fact('精度',pt&&pt.acc!=null?Math.round(pt.acc)+' 米':'未知')+fact('地址',address||'暂无地址')+'</div>');
  const psummary=document.createElement('p');psummary.className='plan-summary';psummary.textContent=`计划：${devicePlanSummary(d.settings||{},state.plan?.schedule,state.plan?.holidays)}`;if(psummary.textContent.length>120){const detail=document.createElement('details');detail.className='device-plan-details';const title=document.createElement('summary');title.textContent='独立采集计划 · 查看完整规则';detail.append(title,psummary);c.append(detail);}else c.append(psummary);
  if(missing){const p=document.createElement('p');p.className='warn-text device-note';p.textContent='本次设备列表未找到，当前显示历史数据';c.append(p)}else if(old){const p=document.createElement('p');p.className='warn-text device-note';p.textContent='位置超过 1 小时，不能视为实时位置';c.append(p)}if(status){const p=document.createElement('p');p.className=/失败/.test(status)?'warn-text device-note':'muted device-note';p.textContent=status;c.append(p)}
- const foot=document.createElement('div');foot.className='device-foot';if(pt){const a=document.createElement('a');a.textContent='打开高德地图';a.target='_blank';a.rel='noopener noreferrer';a.href='https://uri.amap.com/marker?position='+encodeURIComponent(pt.gcj_lon+','+pt.gcj_lat)+'&name='+encodeURIComponent(d.name||d.device_id);foot.append(a)}else foot.append(document.createTextNode('暂无地图位置'));c.append(foot);$('#cards').append(c);}
+ const foot=document.createElement('div');foot.className='device-foot';if(pt){const a=document.createElement('a');a.textContent='打开高德地图';a.target='_blank';a.rel='noopener noreferrer';a.href='https://uri.amap.com/marker?position='+encodeURIComponent(pt.gcj_lon+','+pt.gcj_lat)+'&name='+encodeURIComponent(d.name||d.device_id);foot.append(a)}else foot.append(document.createTextNode('暂无地图位置'));const inspector=deviceDetails(d,state.updated);inspector.open=openDetails.has(d.device_id);c.append(foot,inspector);$('#cards').append(c);}
  management.render();showView(currentView);
  if(!devices.length)$('#cards').innerHTML='<div class="empty">暂无设备数据。请先运行一次 GitHub Actions。</div>';
 }

@@ -2,6 +2,9 @@ import {encryptState, decryptState} from './crypto.js';
 import {devicePlanSummary, globalScheduleSummary} from './plan-summary.js';
 
 const CACHE_KEY = 'locator-admin-v1';
+const REPOSITORY_URL = 'https://github.com/yanzaitian/locator-workbench';
+const SECRETS_URL = `${REPOSITORY_URL}/settings/secrets/actions`;
+const ACTIONS_URL = `${REPOSITORY_URL}/actions/workflows/locator.yml`;
 const DISPATCH_URL = 'https://api.github.com/repos/yanzaitian/locator-workbench/actions/workflows/locator.yml/dispatches';
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const copy = value => structuredClone(value);
@@ -97,6 +100,23 @@ export function createManagement({getState,getPassword,onRefresh,onOpenPlanJSON}
   if (className) node.className = className;
   return node;
  };
+ function link(label,href) {
+  const node = el('a',label,'settings-link');
+  node.href = href; node.target = '_blank'; node.rel = 'noopener noreferrer';
+  return node;
+ }
+ function guide(title,steps) {
+  const details = el('details',null,'settings-guide');
+  const list = el('ol',null,'settings-guide-steps');
+  for (const step of steps) list.append(el('li',step,'settings-guide-step'));
+  details.append(el('summary',title,'settings-guide-summary'),list);
+  return details;
+ }
+ function connection(title,description) {
+  const card = el('section',null,'settings-card settings-connection');
+  card.append(el('h3',title,'settings-connection-title'),el('p',description,'settings-connection-description'));
+  return card;
+ }
  function message(text) { if (ui) ui.status.textContent = text; }
  function settingsMessage(text) { if (ui) ui.settingsStatus.textContent = text; }
  function renderPlanSummary() {
@@ -201,16 +221,59 @@ export function createManagement({getState,getPassword,onRefresh,onOpenPlanJSON}
   reports.id = 'view-reports'; reports.setAttribute('data-view-panel','reports');
   const settings = el('section',null,'management-page management-settings');
   settings.id = 'view-settings'; settings.setAttribute('data-view-panel','settings');
-  settings.append(el('h2','系统设置'));
-  const settingsCard = el('div',null,'settings-card');
-  settingsCard.append(el('h3','GitHub 计划发布授权'),el('p','授权仅用于本页面向 GitHub 提交加密计划。需要仓库 Actions 写入权限；授权到期须重新输入。访问密码不会存储。'),auth.wrap,remember.wrap,authActions);
+  settings.append(el('h2','系统设置'),el('p','连接中心：三类授权分别配置，不能相互替代。访问密码只用于解锁和加密，不是下列任何服务的授权凭据。','settings-intro'));
+  const center = el('div',null,'settings-grid');
+  const settingsCard = connection('GitHub 计划发布授权','用于向本仓库提交加密计划。Token 到期影响网页提交计划，不会替代小米会话，也不会直接停止 Actions 自身的定时任务。访问密码不会存储。');
+  const githubLinks = el('div',null,'settings-links');
+  githubLinks.append(link('创建 GitHub 精细权限 Token','https://github.com/settings/personal-access-tokens/new'),link('打开 GitHub Actions',ACTIONS_URL));
+  settingsCard.append(githubLinks,guide('如何授权 GitHub 并确认计划生效',[
+   '在 GitHub 创建 Fine-grained personal access token，Resource owner 选择目标仓库所属账号，设置到期日。Repository access 选择 Only select repositories，仅选 yanzaitian/locator-workbench。',
+   'Repository permissions 中仅启用 Actions: Read and write；Metadata: Read-only 为必要读取权限。日常提交计划无需 Contents、Workflows 或 Secrets 管理权限。若组织要求审批，须等待批准。',
+   '将新 Token 仅填入下方密码输入框。可选“记住授权”，只在本机保存用访问密码加密的密文；重新解锁后点击“恢复本机加密授权”。清除本机授权只移除本机副本，撤销 Token 请到 GitHub。',
+   '切换到“采集计划”，编辑后点击“加密提交计划”。HTTP 204 仅表示接收，打开 Actions 等待本次运行完成，再点击“刷新发布状态”，以“已生效”回执确认。',
+   'GitHub HTTP 401 请重新创建或输入有效 Token；403 检查仓库访问和 Actions 写入权限。这与小米设备接口的 401 属于不同授权。'
+  ]),auth.wrap,remember.wrap,authActions);
   const settingsStatus = el('p',null,'management-status');
   settingsStatus.setAttribute('role','status'); settingsStatus.setAttribute('aria-live','polite');
-  settingsCard.append(settingsStatus); settings.append(settingsCard);
-  const mail = el('section',null,'device management-mail settings-card');
-  settings.append(mail);
+  settingsCard.append(settingsStatus);
+  const xiaomi = connection('小米定位采集授权','云端通过 XM_TOKEN（serviceToken）和 XM_UID（userId）复用小米会话。此静态页面不能直接完成小米扫码登录或写入 GitHub Secrets。');
+  const xiaomiStatus = el('p',null,'settings-connection-status');
+  const xiaomiLinks = el('div',null,'settings-links');
+  xiaomiLinks.append(link('打开本机授权工作台','http://127.0.0.1:8765/'),link('打开小米云服务','https://i.mi.com/find'),link('配置 GitHub Secrets',SECRETS_URL),link('检查采集 Actions',ACTIONS_URL));
+  xiaomi.append(xiaomiStatus,el('p','账号信息：未知。已发布状态没有可核验的小米昵称、头像、手机号或完整账号资料；设备名称和历史位置不能证明当前登录账号或会话有效。','settings-account-note'),xiaomiLinks,guide('如何重新授权小米并恢复云端采集',[
+   '在运行本项目的电脑上启动 run.bat 或 python server.py，再打开 http://127.0.0.1:8765/，使用本地访问密码登录。首次本地访问需设置密码；它与云端解锁密码分别管理。其他设备上的 127.0.0.1 指向该设备自身，不能连接这台电脑。',
+   '进入本地“设备”→“小米账号”→“扫码登录”，用手机“设置 → 小米账号 → 扫一扫”并确认。已有密码登录和备用 Cookie 登录入口；如需 Cookie，必须来自本人刚验证有效的小米会话，仅在本地输入。',
+   '本地扫码只更新本机数据库，不会自动更新云端 Secrets，当前没有从本页一键同步的按钮。扫码成功后，在项目根目录双击“复制小米TOKEN.cmd”；工具先验证会话有效，仅将单个 TOKEN 值复制到剪贴板，不在终端输出凭据。验证失败请先重新扫码。',
+   '点击“配置 GitHub Secrets”，在 Settings → Secrets and variables → Actions 中用 New repository secret 新建，或用已有条目的 Edit → Update secret 更新 XM_TOKEN，将刚复制的值粘贴并保存。再双击根目录“复制小米UID.cmd”，验证成功后将剪贴板值粘贴到 XM_UID 并保存。两个值须来自同一有效会话；dist/凭据.txt 可能过期，不会自动更新，不要用它覆盖新凭据。',
+   '打开本仓库 Actions → 定位工作台 → Run workflow，选择 main，operation 选择 collect，payload 留空。运行后刷新页面，同时核对设备列表、查询结果和实际位置采样时间；页面可打开或 Pages 发布成功不能证明定位成功。',
+   '小米 HTTP 401 表示设备接口拒绝当前会话，可能已失效或不被接受。历史位置会保留，不能当作新定位。项目未接入云端自动续期，重新扫码需要人工参与，短暂恢复不能证明长期稳定。'
+  ]));
+  const mailCard = connection('邮箱导入授权与月报','邮箱授权码用于只读 IMAP 导入定位邮件，与 GitHub Token、小米会话分别管理。在邮箱服务商开启 IMAP 并生成客户端授权码，再配置 XM_MAIL_CONFIG。');
+  const mailLinks = el('div',null,'settings-links');
+  mailLinks.append(link('设置 XM_MAIL_CONFIG Secret',SECRETS_URL),link('检查邮件导入 Actions',ACTIONS_URL));
+  const mail = el('section',null,'device management-mail settings-mail-status');
+  mailCard.append(mailLinks,guide('如何启用邮件导入及查看月报',[
+   '登录自己的邮箱服务商网页，进入邮箱设置，启用 IMAP 并按服务商要求生成客户端授权码。账号、服务器和授权码仅在 GitHub Secrets 或本地设置中填写，不要发到聊天或写进仓库。',
+   '在 GitHub Secrets 新建或更新 XM_MAIL_CONFIG，值为 JSON 对象：enabled 设为 true，填写 host、port（通常 993）、user、password（客户端授权码）、folder（通常 INBOX）及自定义 device_id 标签。',
+   '填写 sender_contains 或 subject_contains 中至少一个明确的邮件过滤条件；两个都填写时必须同时匹配。邮件必须包含导入器支持的真实定位内容或附件，仅配置邮箱不会产生位置数据。',
+   '在 Actions 手动运行 collect，刷新此页检查“邮件导入状态”、匹配邮件数和导入位置数。未启用、尚未配置、导入完成、部分跳过和导入失败含义不同；导入完成但位置数为 0 不等于已有轨迹。',
+   '进入“月报”按设备和月份查看；邮件位置归入独立邮件设备。月报根据真实采样生成，当月为预览，保留最近 12 个已完成月份。未设置 DEEPSEEK_API_KEY 也可用本地模板；该可选 Secret 用于已完成月份的统计说明。'
+  ]),el('p','能力范围：云端支持只读邮件导入和网页月报展示，当前 Actions 没有接入 SMTP 月报自动发送。配置 IMAP 不会自动把月报发到邮箱；本地 SMTP 计划推送也不等于云端月报邮件发送。','settings-capability-note'),mail);
+  const runtime = connection('运行与安全','GitHub Pages 展示已发布的加密状态，Actions 执行云端采集。以下是当前运行方式与维护步骤。');
+  const runtimeLinks = el('div',null,'settings-links');
+  runtimeLinks.append(link('查看运行记录',ACTIONS_URL),link('管理运行 Secrets',SECRETS_URL),link('管理或撤销 GitHub Token','https://github.com/settings/personal-access-tokens'));
+  runtime.append(runtimeLinks,guide('查看运行机制、锁定与密码轮换步骤',[
+   'Pages 由 GitHub 托管，电脑关机后仍可访问已发布页面；云端采集由 Actions 执行，本地扫码和剪贴板工具则需要电脑开机。能访问网页不代表刚获得新位置。',
+   'Actions cron 配置每 10 分钟发起一次运行，GitHub 可能排队或延迟，不能保证准确间隔。工作流运行频率与设备实际计划不同：仅对到达采集时段且满足设备间隔的设备请求定位，并遵守星期、节假日和独立计划规则。计划时段及页面时间按北京时间（Asia/Shanghai）理解。',
+   '页面“刷新”和“刷新发布状态”只读取已发布状态，不会即时定位，也不会触发 Actions。需要云端重新运行时打开 Actions → Run workflow → operation 选择 collect，再检查实际采样时间。',
+   '点击“锁定”会清空当前页面中的访问密码、Token、设备数据、计划草稿和报告缓存，并使在途操作的结果失效。之前选择记住授权的本机加密副本仍保留，可在解锁后恢复；需要移除时点击“清除本机授权”。',
+   '浏览器“清除本机授权”只删除当前浏览器的加密副本并清空输入，不等于 GitHub 撤销。需要停用 Token 时点击“管理或撤销 GitHub Token”，在 GitHub 删除或撤销对应授权。',
+   '轮换云端访问密码：先在 Actions Secrets 临时添加 LOCATOR_PREVIOUS_PASSWORD（旧密码），再将 LOCATOR_PASSWORD 更新为至少 12 个字符的新密码，运行一次 collect 迁移旧状态；确认成功后用新密码解锁，核对历史和数据。旧密码仅用于本次迁移，不应长期保留。',
+   '若已保存加密计划，单次 collect 不会重加密 cloud/plans.enc.json。暂时保留旧密码 Secret，用新密码解锁后进入“采集计划”，输入 GitHub Token，将当前计划“加密提交计划”一次，等待“已生效”，使计划也用新密码保存。随后删除 LOCATOR_PREVIOUS_PASSWORD，再运行 collect 确认不依赖旧密码。密码轮换后，本机旧授权密文需要清除并重新输入、记住。'
+  ]));
+  center.append(xiaomi,settingsCard,mailCard,runtime); settings.append(center);
   root.replaceChildren(section,reports,settings);
-  ui = {section,form,device,enabled:enabled.input,inherit:inherit.input,start:start.input,end:end.input,interval:interval.input,token:auth.input,remember:remember.input,save,refresh,reset,restore,forget,status,settingsStatus,planSummary,formError,reports,mail};
+  ui = {section,form,device,enabled:enabled.input,inherit:inherit.input,start:start.input,end:end.input,interval:interval.input,token:auth.input,remember:remember.input,save,refresh,reset,restore,forget,status,settingsStatus,xiaomiStatus,planSummary,formError,reports,mail};
   device.onchange = loadDevice;
   for (const key of ['enabled','inherit','start','end','interval']) ui[key].oninput = () => record(key);
   auth.input.oninput = () => { token = auth.input.value.trim(); };
@@ -388,6 +451,10 @@ export function createManagement({getState,getPassword,onRefresh,onOpenPlanJSON}
    message(untouched ? '已生效：云端已发布本次计划。' : '已生效：云端已发布上次提交；当前仍有未保存修改。');
   } else if (!edits.size && !busy && !pending) acceptState(state);
   if (edits.size && revision !== (state.plan_request_id || '')) message('云端计划版本已变化，草稿已保留。请先放弃草稿并载入最新计划，再重新编辑。');
+  ui.xiaomiStatus.textContent = typeof state.error === 'string' && /\b401\b/.test(state.error)
+   ? '已发布状态报告：小米接口 HTTP 401，当前展示可能为历史数据。请重新授权并通过新一轮采集核验。'
+   : state.error ? '已发布状态存在采集异常；当前小米会话有效性未在此页验证，请检查 Actions 和设备查询结果。'
+   : '当前小米会话有效性未在此页验证；请以最新一轮采集的设备查询结果和实际采样时间为准。';
   renderReports(state); renderMail(state);
  }
  function lock() {
