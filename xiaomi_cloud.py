@@ -51,6 +51,38 @@ def _json(text):
     return json.loads(text.replace("&&&START&&&", "").strip())
 
 
+def find_credentials(cookies):
+    """Select unexpired cookies applicable to the actual Find API, not other services."""
+    host, path = "i.mi.com", "/find/v3/device/status/list"
+    selected = {}
+    for name in ("serviceToken", "userId"):
+        candidates = []
+        for cookie in cookies:
+            if cookie.name != name or cookie.is_expired():
+                continue
+            domain = cookie.domain.lstrip(".").lower()
+            if not domain or not (host == domain or (
+                    cookie.domain_specified and host.endswith("." + domain))):
+                continue
+            cookie_path = cookie.path or "/"
+            if not (path == cookie_path or (path.startswith(cookie_path) and (
+                    cookie_path.endswith("/") or path[len(cookie_path):].startswith("/")))):
+                continue
+            value = cookie.value
+            if not isinstance(value, str) or not value or any(
+                    ord(c) <= 32 or ord(c) >= 127 or c in ';,"\\' for c in value):
+                continue
+            candidates.append(((len(domain), len(cookie_path)), value))
+        if not candidates:
+            raise XiaomiError("未取得适用于查找设备接口的有效 Cookie")
+        rank = max(item[0] for item in candidates)
+        values = {value for score, value in candidates if score == rank}
+        if len(values) != 1:
+            raise XiaomiError("查找设备 Cookie 存在歧义，请重新授权")
+        selected[name] = values.pop()
+    return selected["serviceToken"], selected["userId"]
+
+
 def login(username, password):
     """返回 (service_token, user_id, cookie_header)。"""
     session = requests.Session()
@@ -84,14 +116,11 @@ def login(username, password):
         if not find_device_url:
             raise XiaomiError("未获取到查找设备授权")
         session.get(find_device_url, timeout=30)
-        cookies = session.cookies.get_dict()
-        token, user_id = cookies.get("serviceToken"), cookies.get("userId")
-        if not token or not user_id:
-            raise XiaomiError("未拿到 serviceToken")
+        token, user_id = find_credentials(session.cookies)
         header = "userId=%s;serviceToken=%s" % (user_id, token)
         return token, user_id, header
-    except requests.RequestException as exc:
-        raise XiaomiError("网络错误：%s" % exc)
+    except requests.RequestException:
+        raise XiaomiError("小米授权网络请求失败") from None
 
 
 QR_SESSIONS = {}
@@ -131,16 +160,17 @@ def qr_poll(ticket):
         return None, "waiting"
     if data.get("code") == 0 and data.get("location"):
         try:
-            s.get(data["location"], timeout=30)
-        except Exception:
-            pass
-        cookies = s.cookies.get_dict()
-        token, uid = cookies.get("serviceToken"), cookies.get("userId")
-        if token and uid:
-            QR_SESSIONS.pop(ticket, None)
-            return (token, uid), "ok"
-        return None, "授权失败"
-    return None, data.get("desc") or "waiting"
+            callback = s.get(data["location"], timeout=30)
+            callback.raise_for_status()
+        except requests.RequestException:
+            return None, "授权回调网络请求失败，请重试"
+        try:
+            token, uid = find_credentials(s.cookies)
+        except XiaomiError:
+            return None, "未取得查找设备授权，请重新扫码"
+        QR_SESSIONS.pop(ticket, None)
+        return (token, uid), "ok"
+    return None, "小米未返回登录授权，请重新扫码" if data.get("desc") else "waiting"
 
 
 class Client:
@@ -156,7 +186,8 @@ class Client:
     def device_list(self):
         try:
             r = self.session.get("https://i.mi.com/find/v3/device/status/list",
-                                 headers=self._headers(), params={"ts": _ts()}, timeout=30)
+                                 headers=self._headers(), params={"ts": _ts()}, timeout=30,
+                                 allow_redirects=False)
         except requests.RequestException:
             # Request exceptions can contain URLs, cookies or response text.
             raise DeviceListError("network_error") from None
