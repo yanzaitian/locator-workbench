@@ -1,4 +1,5 @@
 import {encryptState, decryptState} from './crypto.js';
+import {devicePlanSummary, globalScheduleSummary} from './plan-summary.js';
 
 const CACHE_KEY = 'locator-admin-v1';
 const DISPATCH_URL = 'https://api.github.com/repos/yanzaitian/locator-workbench/actions/workflows/locator.yml/dispatches';
@@ -85,9 +86,10 @@ export function httpMessage(status) {
  return `HTTP ${Number.isInteger(status) ? status : 0}：${HTTP_MESSAGES[status] || 'GitHub 请求失败，请稍后重试。'}`;
 }
 
-export function createManagement({getState,getPassword,onRefresh}) {
+export function createManagement({getState,getPassword,onRefresh,onOpenPlanJSON}) {
  let root, ui, baseline, revision = '', edits = new Map(), token = '', pending = null;
  let generation = 0, busy = false, restoring = false, active = false, editVersion = 0;
+ let reportSignature = null, reportCards = new Map(), reportItems = [];
  const valid = version => active && generation === version;
  const el = (tag,text,className) => {
   const node = document.createElement(tag);
@@ -96,6 +98,20 @@ export function createManagement({getState,getPassword,onRefresh}) {
   return node;
  };
  function message(text) { if (ui) ui.status.textContent = text; }
+ function settingsMessage(text) { if (ui) ui.settingsStatus.textContent = text; }
+ function renderPlanSummary() {
+  ui.planSummary.replaceChildren();
+  const id = ui.device.value;
+  if (!id || !baseline?.devices[id]) return;
+  const settings = baseline.devices[id], own = ownPlan(settings);
+  ui.planSummary.append(el('h3','当前已发布规则'),el('p',devicePlanSummary(settings,baseline.schedule,baseline.holidays),'muted'));
+  if (!own) ui.planSummary.append(el('p',globalScheduleSummary(baseline.schedule,baseline.holidays),'muted'));
+  const effective = own || baseline.schedule;
+  if (object(effective?.days) && Object.keys(effective.days).length) ui.planSummary.append(el('p','存在星期覆盖：修改默认时段不会改变星期专属规则。','warn-text'));
+  if (effective?.skip_holidays !== false) ui.planSummary.append(el('p','节假日和调休规则可能覆盖默认时段，请同时核对上述已发布规则。','muted'));
+  if (edits.has(id)) ui.planSummary.append(el('p','当前表单有未保存草稿；以上仍为已发布规则。','warn-text'));
+  if (own && edits.get(id)?.inherit) ui.planSummary.append(el('p','提交继承全局后，将移除该设备的独立周历及星期覆盖。','warn-text'));
+ }
  function clearToken() { token = ''; if (ui) ui.token.value = ''; }
  function field(label,type) {
   const wrap = el('label',null,'management-field'), input = el('input');
@@ -109,7 +125,9 @@ export function createManagement({getState,getPassword,onRefresh}) {
  }
  function loadDevice() {
   try {
+   ui.planSummary.replaceChildren();
    const draft = currentDraft(); ui.formError.textContent = '';
+   renderPlanSummary();
    ui.enabled.disabled = ui.inherit.disabled = !draft;
    if (!draft) { ui.start.value = ui.end.value = ui.interval.value = ''; return; }
    for (const key of ['enabled','inherit']) ui[key].checked = draft[key];
@@ -129,6 +147,7 @@ export function createManagement({getState,getPassword,onRefresh}) {
    if (key === 'inherit') draft.inheritChanged = true;
    edits.set(ui.device.value,draft); editVersion++;
    ui.start.disabled = ui.end.disabled = draft.inherit;
+   renderPlanSummary();
    message('有未保存的计划修改。');
   } catch { message('原计划格式无效，未修改。'); }
  }
@@ -151,6 +170,10 @@ export function createManagement({getState,getPassword,onRefresh}) {
   const section = el('section',null,'management-page management-plans');
   section.id = 'view-plans'; section.setAttribute('data-view-panel','plans');
   section.append(el('h2','采集计划'));
+  const planTools = el('div',null,'management-actions');
+  const exportPlan = el('button','导出计划 JSON','button button-secondary'); exportPlan.type = 'button';
+  exportPlan.onclick = () => onOpenPlanJSON?.();
+  planTools.append(exportPlan); section.append(planTools);
   const form = el('form',null,'management-form');
   const pick = el('label',null,'management-field'); pick.append(el('span','选择设备'));
   const device = el('select'); device.setAttribute('aria-label','选择设备'); pick.append(device);
@@ -163,7 +186,6 @@ export function createManagement({getState,getPassword,onRefresh}) {
   auth.input.setAttribute('aria-label','GitHub 授权 Token');
   auth.input.autocomplete = 'off'; auth.input.spellcheck = false;
   const remember = field('记住授权：仅在本机保存加密密文（默认关闭）','checkbox');
-  remember.input.setAttribute('aria-label','记住加密授权');
   remember.input.checked = false;
   const restore = el('button','恢复本机加密授权'), forget = el('button','清除本机授权');
   const save = el('button','加密提交计划','primary'), refresh = el('button','刷新发布状态'), reset = el('button','放弃草稿并载入最新计划');
@@ -172,7 +194,8 @@ export function createManagement({getState,getPassword,onRefresh}) {
   const authActions = el('div',null,'management-actions'); authActions.append(restore,forget);
   const status = el('p',null,'management-status'), formError = el('p',null,'warn-text');
   status.setAttribute('role','status'); status.setAttribute('aria-live','polite');
-  form.append(grid,note,formError,actions,status);
+  const planSummary = el('div',null,'plan-rule-summary');
+  form.append(grid,planSummary,note,formError,actions,status);
   section.append(form);
   const reports = el('section',null,'management-page management-reports');
   reports.id = 'view-reports'; reports.setAttribute('data-view-panel','reports');
@@ -181,20 +204,22 @@ export function createManagement({getState,getPassword,onRefresh}) {
   settings.append(el('h2','系统设置'));
   const settingsCard = el('div',null,'settings-card');
   settingsCard.append(el('h3','GitHub 计划发布授权'),el('p','授权仅用于本页面向 GitHub 提交加密计划。需要仓库 Actions 写入权限；授权到期须重新输入。访问密码不会存储。'),auth.wrap,remember.wrap,authActions);
-  settings.append(settingsCard);
+  const settingsStatus = el('p',null,'management-status');
+  settingsStatus.setAttribute('role','status'); settingsStatus.setAttribute('aria-live','polite');
+  settingsCard.append(settingsStatus); settings.append(settingsCard);
   const mail = el('section',null,'device management-mail settings-card');
   settings.append(mail);
   root.replaceChildren(section,reports,settings);
-  ui = {section,form,device,enabled:enabled.input,inherit:inherit.input,start:start.input,end:end.input,interval:interval.input,token:auth.input,remember:remember.input,save,refresh,reset,restore,forget,status,formError,reports,mail};
+  ui = {section,form,device,enabled:enabled.input,inherit:inherit.input,start:start.input,end:end.input,interval:interval.input,token:auth.input,remember:remember.input,save,refresh,reset,restore,forget,status,settingsStatus,planSummary,formError,reports,mail};
   device.onchange = loadDevice;
   for (const key of ['enabled','inherit','start','end','interval']) ui[key].oninput = () => record(key);
   auth.input.oninput = () => { token = auth.input.value.trim(); };
   remember.input.onchange = () => {
-   if (!remember.input.checked) { try { localStorage.removeItem(CACHE_KEY); } catch { message('无法清除本机授权，请检查浏览器存储权限。'); } }
+   if (!remember.input.checked) { try { localStorage.removeItem(CACHE_KEY); } catch { settingsMessage('无法清除本机授权，请检查浏览器存储权限。'); } }
   };
   forget.onclick = () => {
    clearToken(); remember.input.checked = false;
-   try { localStorage.removeItem(CACHE_KEY); message('本机授权已清除。'); } catch { message('无法清除本机授权，请检查浏览器存储权限。'); }
+   try { localStorage.removeItem(CACHE_KEY); settingsMessage('本机授权已清除。'); } catch { settingsMessage('无法清除本机授权，请检查浏览器存储权限。'); }
   };
   restore.onclick = restoreToken;
   reset.onclick = () => {
@@ -207,17 +232,17 @@ export function createManagement({getState,getPassword,onRefresh}) {
  async function restoreToken() {
   if (restoring || busy) return;
   const version = generation; let password = getPassword();
-  if (!password) { message('请先解锁工作台。'); return; }
+  if (!password) { settingsMessage('请先解锁工作台。'); return; }
   restoring = true; const target = ui; target.restore.disabled = true;
   try {
    const raw = localStorage.getItem(CACHE_KEY);
-   if (!raw) { message('本机没有保存的加密授权。'); return; }
+   if (!raw) { settingsMessage('本机没有保存的加密授权。'); return; }
    let restored = await decryptState(JSON.parse(raw),password); password = '';
    if (!valid(version)) { restored = null; return; }
    if (typeof restored?.token !== 'string' || !restored.token.trim()) throw Error();
    token = restored.token.trim(); restored = null; ui.token.value = token; ui.remember.checked = true;
-   message('已恢复加密授权；授权到期仍须重新授权。');
-  } catch { if (valid(version)) message('无法恢复授权，请重新输入 Token。'); }
+   settingsMessage('已恢复加密授权；授权到期仍须重新授权。');
+  } catch { if (valid(version)) settingsMessage('无法恢复授权，请重新输入 Token。'); }
   finally { password = ''; if (valid(version)) { restoring = false; target.restore.disabled = false; } }
  }
  async function refreshState() {
@@ -263,20 +288,17 @@ export function createManagement({getState,getPassword,onRefresh}) {
   finally { password = ''; if (valid(version)) { busy = false; ui.save.disabled = !ui.device.value; ui.reset.disabled = false; } }
   if (valid(version)) render();
  }
- function renderReports(state) {
-  ui.reports.replaceChildren(el('h2','月报'));
-  const reports = normalizeReports(state.reports).sort((a,b)=>String(b.month).localeCompare(String(a.month)));
-  if (!reports.length) { ui.reports.append(el('p','云端刚开始积累定位记录，下月将自动生成月报。','empty')); return; }
-  for (const report of reports) {
-   const preview = report.status === 'preview' || report.is_final === false || report.is_preview === true;
+ function reportPreview(report) { return report.status === 'preview' || report.is_final === false || report.is_preview === true; }
+ function reportCard(report,name,preview) {
    const card = el('details',null,'device management-report');
-   const name = (state.devices || []).find(device => device.device_id === report.device_id)?.name || report.device_id || '设备未知';
    card.append(el('summary',`${report.month || '月份未知'} · ${name} · ${preview ? '本月预览' : '月报'}`));
    card.append(el('span',preview ? '本月预览' : '月报', 'tag'));
    const source = report.ai_status === 'ok' ? '本地统计 + DeepSeek 说明' : ({local:'本地模板',template:'本地模板',deepseek:'DeepSeek'}[report.source] || '未知');
    card.append(el('p',`来源：${source} · 生成时间：${safeDate(report.generated_at)}`,'muted'));
    const content = typeof report.content === 'string' ? report.content : '报告内容暂不可用。';
-   card.append(el('pre',content,'management-markdown'));
+   const markdown = el('pre',content,'management-markdown');
+   markdown.tabIndex = 0; markdown.setAttribute('aria-label',`${report.month || '月份未知'} ${name} 月报内容`);
+   card.append(markdown);
    if (report.ai_status === 'ok' && Array.isArray(report.ai_notes)) for (const note of report.ai_notes) { if (typeof note === 'string') card.append(el('p',note,'muted')); }
    if (report.ai_status === 'failed' || report.ai_status === 'invalid_response') card.append(el('p','DeepSeek 说明暂不可用，统计报告已保留。','muted'));
    const download = el('button','下载 Markdown'); download.type = 'button';
@@ -287,8 +309,60 @@ export function createManagement({getState,getPassword,onRefresh}) {
     a.download = `${report.month || 'month'}-${report.device_id || 'device'}`.replace(/[^\p{L}\p{N}_.-]/gu,'_') + '.md';
     a.click(); URL.revokeObjectURL(url);
    };
-   card.append(download); ui.reports.append(card);
+   card.append(download); return card;
+ }
+ function filterReports() {
+  const selected = reportItems.filter(item => (!ui.reportDevice.value || item.device === ui.reportDevice.value) &&
+   (!ui.reportMonth.value || item.month === ui.reportMonth.value) && (!ui.reportType.value || item.type === ui.reportType.value));
+  ui.reportResults.replaceChildren();
+  if (!selected.length) {
+   ui.reportResults.append(el('p',reportItems.length ? '没有符合筛选条件的月报。' : '云端刚开始积累定位记录，下月将自动生成月报。','empty')); return;
   }
+  let month, group;
+  for (const item of selected) {
+   if (month !== item.month) {
+    month = item.month; group = el('section',null,'report-month-group');
+    group.append(el('h3',month || '月份未知')); ui.reportResults.append(group);
+   }
+   group.append(item.card);
+  }
+ }
+ function renderReports(state) {
+  const reports = normalizeReports(state.reports).sort((a,b)=>String(b.month || '').localeCompare(String(a.month || '')));
+  const names = new Map((state.devices || []).map(device => [device.device_id,device.name || device.device_id]));
+  const signature = JSON.stringify(reports.map(report => [report,names.get(report.device_id)]));
+  if (reportSignature === signature) return;
+  if (!ui.reportResults) {
+   ui.reports.append(el('h2','月报'));
+   const filters = el('div',null,'report-filters');
+   for (const [key,label] of [['reportDevice','月报设备'],['reportMonth','月报月份'],['reportType','月报类型']]) {
+    const wrap = el('label',null,'management-field'), select = el('select');
+    select.setAttribute('aria-label',label); wrap.append(el('span',label),select); filters.append(wrap);
+    ui[key] = select; select.onchange = filterReports;
+   }
+   ui.reportResults = el('div'); ui.reports.append(filters,ui.reportResults);
+  }
+  function options(select, entries) {
+   const previous = select.value;
+   select.replaceChildren();
+   for (const [value,label] of [['','全部'],...entries]) { const option = el('option',label); option.value = value; select.append(option); }
+   select.value = entries.some(([value]) => value === previous) ? previous : '';
+  }
+  options(ui.reportDevice,[...new Set(reports.map(report => report.device_id || ''))].filter(Boolean).map(id => [id,names.get(id) || id]));
+  options(ui.reportMonth,[...new Set(reports.map(report => report.month || ''))].filter(Boolean).map(month => [month,month]));
+  options(ui.reportType,[['preview','本月预览'],['final','正式月报']]);
+  const next = new Map(), counts = new Map();
+  reportItems = reports.map(report => {
+   const preview = reportPreview(report), name = names.get(report.device_id) || report.device_id || '设备未知';
+   const base = JSON.stringify([report.device_id,report.month,preview]), index = counts.get(base) || 0;
+   counts.set(base,index + 1);
+   const key = base + ':' + index, contentSignature = JSON.stringify([report,name]), previous = reportCards.get(key);
+   const card = previous?.signature === contentSignature ? previous.card : reportCard(report,name,preview);
+   if (previous && card !== previous.card) card.open = previous.card.open;
+   next.set(key,{signature:contentSignature,card});
+   return {device:report.device_id || '',month:report.month || '',type:preview ? 'preview' : 'final',card};
+  });
+  reportCards = next; reportSignature = signature; filterReports();
  }
  function renderMail(state) {
   const mail = object(state.mail) ? state.mail : {};
@@ -310,7 +384,7 @@ export function createManagement({getState,getPassword,onRefresh}) {
    const untouched = editVersion === pending.submittedEdit;
    pending = null;
    if (untouched) { edits.clear(); acceptState(state); }
-   else { baseline = plansFromState(state); revision = state.plan_request_id || ''; }
+   else { baseline = plansFromState(state); revision = state.plan_request_id || ''; renderPlanSummary(); }
    message(untouched ? '已生效：云端已发布本次计划。' : '已生效：云端已发布上次提交；当前仍有未保存修改。');
   } else if (!edits.size && !busy && !pending) acceptState(state);
   if (edits.size && revision !== (state.plan_request_id || '')) message('云端计划版本已变化，草稿已保留。请先放弃草稿并载入最新计划，再重新编辑。');
@@ -326,6 +400,7 @@ export function createManagement({getState,getPassword,onRefresh}) {
   if (container) { container.replaceChildren(); container.hidden = true; }
   ui = null; root = null; baseline = null; revision = ''; edits.clear(); pending = null;
   busy = restoring = false; editVersion = 0;
+  reportSignature = null; reportCards.clear(); reportItems = [];
  }
  return {render,lock};
 }

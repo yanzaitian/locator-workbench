@@ -6,11 +6,13 @@
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#f4f6f8">
 <title>定位工作台</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%233569d4'/%3E%3Cpath d='M32 10c-10 0-18 8-18 18 0 14 18 27 18 27s18-13 18-27c0-10-8-18-18-18zm0 25a7 7 0 1 1 0-14 7 7 0 0 1 0 14z' fill='white'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="management.css">
 </head>
 <body>
+<a class="skip-link" href="#main-content">跳到主要内容</a>
 <div class="app-shell">
-  <aside class="sidebar" aria-label="工作台侧栏">
+  <aside id="sidebar" class="sidebar" data-locked="true" aria-label="工作台侧栏">
     <a class="brand" href="./" aria-label="定位工作台首页"><span class="brand-mark" aria-hidden="true">L</span><span><strong>定位工作台</strong><small>LOCATION DESK</small></span></a>
     <nav id="primary-navigation" class="primary-navigation" aria-label="主导航" hidden>
       <p class="nav-caption">工作区</p>
@@ -22,12 +24,11 @@
     <div class="sidebar-note"><span class="cloud-dot" aria-hidden="true"></span><span><strong>云端工作台</strong><small>可在设备关机时访问</small></span></div>
   </aside>
 
-  <main class="main-content">
+  <main id="main-content" class="main-content" tabindex="-1">
     <header class="topbar">
       <div><p class="eyebrow">云端设备管理</p><h1>定位工作台</h1><p class="subtitle">查看设备状态、采集计划与月度报告</p></div>
       <div class="toolbar" id="tools" hidden>
         <button id="refresh" class="button button-secondary" type="button"><span aria-hidden="true">↻</span> 刷新数据</button>
-        <button id="plans" class="button button-secondary" type="button">计划 JSON</button>
         <button id="lock" class="button button-quiet" type="button">锁定</button>
       </div>
     </header>
@@ -47,16 +48,16 @@
     <section id="overview" class="view-panel" data-view-panel="overview" aria-label="设备总览" hidden>
       <div class="section-intro"><div><p class="eyebrow">一览</p><h2>设备总览</h2><p>位置时间与采集时间分开展示；历史数据不会标记为实时。</p></div><p id="updated" class="updated-label"></p></div>
       <section id="summary" class="summary" aria-label="设备数据摘要" hidden></section>
-      <section class="overview-surface">
-        <div class="section-head"><div><h3>设备状态</h3><p>选择卡片中的地图链接查看最后记录的位置</p></div></div>
-        <p id="schedule-summary" class="schedule-summary" hidden></p>
+      <section class="overview-surface" aria-labelledby="device-status-title">
+        <div class="section-head"><div><h3 id="device-status-title">设备状态</h3><p>选择卡片中的地图链接查看最后记录的位置</p></div></div>
+        <details class="schedule-details"><summary>查看全局采集规则</summary><p id="schedule-summary" class="schedule-summary" hidden></p></details>
         <section id="device-section" hidden><section id="cards" class="cards"></section></section>
       </section>
     </section>
 
     <section id="management" hidden aria-label="计划、报告和系统设置"></section>
 
-    <dialog id="editor" class="plan-dialog"><h2>计划 JSON</h2><p>此文件仅用于导出备份，不会直接保存到仓库。通过“采集计划”中的加密提交操作发布更改；云端确认后才会生效。</p><textarea id="plantext" aria-label="设备计划 JSON" spellcheck="false"></textarea><p id="planerror" class="warn-text" role="status"></p><div class="dialog-actions"><button class="button button-primary" id="download" type="button">下载 JSON</button><button class="button button-secondary" id="close" type="button">关闭</button></div></dialog>
+    <dialog id="editor" class="plan-dialog" aria-labelledby="editor-title"><h2 id="editor-title">计划 JSON</h2><p>此文件仅用于导出备份，不会直接保存到仓库。通过“采集计划”中的加密提交操作发布更改；云端确认后才会生效。</p><textarea id="plantext" aria-label="设备计划 JSON" spellcheck="false"></textarea><p id="planerror" class="warn-text" role="status"></p><div class="dialog-actions"><button class="button button-primary" id="download" type="button">下载 JSON</button><button class="button button-secondary" id="close" type="button">关闭</button></div></dialog>
   </main>
 </div>
 <script type="module" src="app.js"></script>
