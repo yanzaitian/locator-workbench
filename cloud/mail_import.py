@@ -2,6 +2,7 @@
 
 Caller must persist the returned state through cloud.crypto_state.encrypt; this
 module never reads/writes files, settings or environment variables.
+It only imports received locations; it never initiates device positioning.
 
 import_mail(state, config, now=None, connection_factory=None) returns a deep copy.
 config is an IMAP mapping (or {"imap": mapping}): enabled, host, user, password,
@@ -36,8 +37,8 @@ import ingest
 _EXTENSIONS = {"gpx", "kml", "json", "jsonl", "txt", "xml"}
 _MESSAGES = {
     "disabled": "邮件定位导入未启用",
-    "not_configured": "邮件定位导入尚未配置邮箱登录信息",
-    "ok": "邮件定位导入完成",
+    "not_configured": "邮件定位导入尚未配置邮箱登录信息（仅导入收到的位置，不发起设备定位）",
+    "ok": "邮件位置导入完成（仅导入收到的位置，不发起设备定位）",
     "partial": "邮件定位导入完成，部分内容已安全跳过",
     "error": "邮件定位导入失败，保留已有位置和可重试进度",
 }
@@ -188,7 +189,12 @@ def _attachments(msg, conf, now, stats, issue):
 
 
 def import_mail(state, config, now=None, connection_factory=None):
-    """Return an isolated state copy; all public diagnostics are fixed categories."""
+    """Import received positions only; never request a device location.
+
+    Return an isolated state copy with fixed public diagnostics and source
+    enabled/configured/status flags. A plan source switch overrides the legacy
+    mailbox enabled flag; credentials stay in this call's local configuration.
+    """
     result = copy.deepcopy(state if state is not None else {"devices": []})
     previous = result.get("mail") or {}
     # Whitelist cursor fields rather than carrying old mail diagnostics/config.
@@ -206,6 +212,14 @@ def import_mail(state, config, now=None, connection_factory=None):
         mail["last_uid"] = old_uid
     result["mail"] = mail
     conn = None
+    switches = result.get("plan", {}).get("sources", {})
+    source_enabled = switches.get("mail")
+    source = {"enabled": source_enabled is not False, "configured": False, "status": "disabled"}
+    result.setdefault("sources", {})["mail"] = source
+    for row in result.get("devices", []):
+        if row.get("source") == "mail":
+            row["query_status"] = ("等待邮件导入（保留历史位置）" if source["enabled"]
+                                   else "邮件导入未启用（保留历史位置）")
 
     def status(value, error=None):
         mail.update(status=value, message=_MESSAGES[value], error=error)
@@ -215,6 +229,13 @@ def import_mail(state, config, now=None, connection_factory=None):
             mail["error"] = category
 
     try:
+        # A plan switch takes precedence over the legacy mailbox enabled flag.
+        conf = config.get("imap", config) if isinstance(config, dict) else None
+        source["configured"] = (isinstance(conf, dict) and all(
+            isinstance(conf.get(key), str) and bool(conf[key].strip())
+            for key in ("host", "user", "password")))
+        if source_enabled is False:
+            return result
         now = common.now_utc() if now is None else now
         if not isinstance(now, dt.datetime) or now.tzinfo is None or now.utcoffset() is None:
             raise _Failure("invalid_config")
@@ -227,11 +248,18 @@ def import_mail(state, config, now=None, connection_factory=None):
         conf = config.get("imap", config)
         if not isinstance(conf, dict):
             raise _Failure("invalid_config")
+        conf = dict(conf)
+        if source_enabled is True:
+            conf["enabled"] = True
+        else:
+            source["enabled"] = conf.get("enabled", False) is True
         if conf.get("enabled", False) is False:
             return result
         if conf.get("enabled") is not True:
             raise _Failure("invalid_config")
-        conf = dict(conf)
+        if source_enabled is True and not source["configured"]:
+            mail["message"] = _MESSAGES["not_configured"]
+            return result
         for key in ("sender_contains", "subject_contains"):
             value = conf.get(key, "")
             if not isinstance(value, str) or len(value) > 512 or "\r" in value or "\n" in value:
@@ -341,6 +369,12 @@ def import_mail(state, config, now=None, connection_factory=None):
     except Exception:
         status("error", "unexpected_error")
     finally:
+        source["status"] = ("not_configured" if source["enabled"] and not source["configured"]
+                            and mail["status"] == "disabled" else mail["status"])
+        if mail["status"] == "ok" and not mail["points"]:
+            for row in result.get("devices", []):
+                if row.get("source") == "mail":
+                    row["query_status"] = "未收到新邮件位置（保留历史位置）"
         if conn is not None:
             try:
                 conn.logout()
