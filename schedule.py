@@ -178,9 +178,26 @@ def _parse_device_plan(raw):
     return raw
 
 
+def cloud_sources(plans):
+    """Resolve non-secret source switches, preserving legacy defaults."""
+    sources = plans.get("sources", {})
+    if not isinstance(sources, dict):
+        raise ValueError("sources 必须为对象")
+    if set(sources) - {"direct", "mail"}:
+        raise ValueError("未知采集来源")
+    for value in sources.values():
+        if type(value) is not bool:
+            raise ValueError("采集来源必须为布尔值")
+    resolved = {key: sources.get(key, True) for key in ("direct", "mail")}
+    if not any(resolved.values()):
+        raise ValueError("至少启用一个采集来源")
+    return resolved
+
+
 def validate_cloud_plans(value):
     if not isinstance(value, dict) or not isinstance(value.get("devices", {}), dict):
         raise ValueError("计划必须包含devices对象")
+    cloud_sources(value)
     if "schedule" in value:
         validate_schedule(value["schedule"], 10)
     for did, device in value.get("devices", {}).items():
