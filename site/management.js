@@ -15,6 +15,7 @@ export function plansFromState(state) {
  const plan = object(state?.plan) ? copy(state.plan) : {};
  plan.schedule ??= {};
  plan.holidays ??= {};
+ plan.sources = {...(object(plan.sources) ? plan.sources : {}),direct:plan.sources?.direct !== false,mail:plan.sources?.mail !== false};
  plan.devices = object(plan.devices) ? plan.devices : {};
  for (const device of state?.devices || []) {
   if (typeof device.device_id === 'string' && !(device.device_id in plan.devices)) {
@@ -92,6 +93,7 @@ export function httpMessage(status) {
 export function createManagement({getState,getPassword,onRefresh,onOpenPlanJSON}) {
  let root, ui, baseline, revision = '', edits = new Map(), token = '', pending = null;
  let generation = 0, busy = false, restoring = false, active = false, editVersion = 0;
+ let sourceEdits = null;
  let reportSignature = null, reportCards = new Map(), reportItems = [];
  const valid = version => active && generation === version;
  const el = (tag,text,className) => {
@@ -149,7 +151,7 @@ export function createManagement({getState,getPassword,onRefresh,onOpenPlanJSON}
    const draft = currentDraft(); ui.formError.textContent = '';
    renderPlanSummary();
    ui.enabled.disabled = ui.inherit.disabled = !draft;
-   if (!draft) { ui.start.value = ui.end.value = ui.interval.value = ''; return; }
+   if (!draft) { ui.start.value = ui.end.value = ui.interval.value = ''; ui.start.disabled = ui.end.disabled = ui.interval.disabled = true; return; }
    for (const key of ['enabled','inherit']) ui[key].checked = draft[key];
    for (const key of ['start','end','interval']) ui[key].value = draft[key];
    ui.start.disabled = ui.end.disabled = draft.inherit;
@@ -183,7 +185,8 @@ export function createManagement({getState,getPassword,onRefresh,onOpenPlanJSON}
   const ids = editable;
   ui.device.value = ids.includes(selected) ? selected : ids[0] || '';
   loadDevice();
-  ui.save.disabled = !ui.device.value || busy;
+  for (const key of ['direct','mail']) ui.sourceInputs[key].checked = (sourceEdits || baseline.sources)[key];
+  ui.save.disabled = busy;
  }
  function createUI() {
   root.classList.add('management'); root.hidden = false;
@@ -192,9 +195,31 @@ export function createManagement({getState,getPassword,onRefresh,onOpenPlanJSON}
   section.append(el('h2','采集计划'));
   const planTools = el('div',null,'management-actions');
   const exportPlan = el('button','导出计划 JSON','button button-secondary'); exportPlan.type = 'button';
-  exportPlan.onclick = () => onOpenPlanJSON?.();
+  exportPlan.onclick = () => {
+   // Keep the existing dialog/download flow, but export the complete published plan.
+   onOpenPlanJSON?.();
+   const editor = document.getElementById('plantext');
+   if (editor) editor.value = JSON.stringify(plansFromState(getState()),null,2);
+  };
   planTools.append(exportPlan); section.append(planTools);
   const form = el('form',null,'management-form');
+  const sources = el('fieldset',null,'collection-sources');
+  sources.append(el('legend','获取位置的两种方式'),el('p','两种方式可独立开启或关闭。修改后请加密提交，等待云端发布确认。','muted'));
+  const sourceInputs = {}, sourceStatuses = {};
+  for (const [key,title,description] of [
+   ['direct','定时直接查询小米','由云端按设备计划直接查询小米定位接口，自动更新位置；不是 AI 模拟点击。需要有效的小米会话和可用设备。'],
+   ['mail','邮箱导入','通过只读 IMAP 导入已有定位邮件中的定位附件，不向设备发起定位。需要配置邮箱授权及过滤条件；开启开关不代表已配置或已验证。']
+  ]) {
+   const card = el('div',null,'collection-source');
+   const control = field(title,'checkbox');
+   control.input.setAttribute('aria-label',title);
+   const descriptionId = 'collection-source-' + key;
+   const descriptionNode = el('p',description,'muted'); descriptionNode.id = descriptionId;
+   control.input.setAttribute('aria-describedby',descriptionId);
+   const sourceStatus = el('p',null,'collection-source-status'); sourceStatus.setAttribute('role','status');
+   card.append(control.wrap,descriptionNode,sourceStatus); sources.append(card);
+   sourceInputs[key] = control.input; sourceStatuses[key] = sourceStatus;
+  }
   const pick = el('label',null,'management-field'); pick.append(el('span','选择设备'));
   const device = el('select'); device.setAttribute('aria-label','选择设备'); pick.append(device);
   const enabled = field('启用设备','checkbox'), inherit = field('继承全局计划','checkbox');
@@ -215,7 +240,7 @@ export function createManagement({getState,getPassword,onRefresh,onOpenPlanJSON}
   const status = el('p',null,'management-status'), formError = el('p',null,'warn-text');
   status.setAttribute('role','status'); status.setAttribute('aria-live','polite');
   const planSummary = el('div',null,'plan-rule-summary');
-  form.append(grid,planSummary,note,formError,actions,status);
+  form.append(sources,grid,planSummary,note,formError,actions,status);
   section.append(form);
   const reports = el('section',null,'management-page management-reports');
   reports.id = 'view-reports'; reports.setAttribute('data-view-panel','reports');
@@ -273,7 +298,11 @@ export function createManagement({getState,getPassword,onRefresh,onOpenPlanJSON}
   ]));
   center.append(xiaomi,settingsCard,mailCard,runtime); settings.append(center);
   root.replaceChildren(section,reports,settings);
-  ui = {section,form,device,enabled:enabled.input,inherit:inherit.input,start:start.input,end:end.input,interval:interval.input,token:auth.input,remember:remember.input,save,refresh,reset,restore,forget,status,settingsStatus,xiaomiStatus,planSummary,formError,reports,mail};
+  ui = {section,form,sourceInputs,sourceStatuses,device,enabled:enabled.input,inherit:inherit.input,start:start.input,end:end.input,interval:interval.input,token:auth.input,remember:remember.input,save,refresh,reset,restore,forget,status,settingsStatus,xiaomiStatus,planSummary,formError,reports,mail};
+  for (const key of ['direct','mail']) sourceInputs[key].onchange = () => {
+   sourceEdits = {...(sourceEdits || baseline.sources),[key]:sourceInputs[key].checked}; editVersion++;
+   message('有未保存的来源选择；请加密提交计划。');
+  };
   device.onchange = loadDevice;
   for (const key of ['enabled','inherit','start','end','interval']) ui[key].oninput = () => record(key);
   auth.input.oninput = () => { token = auth.input.value.trim(); };
@@ -287,7 +316,7 @@ export function createManagement({getState,getPassword,onRefresh,onOpenPlanJSON}
   restore.onclick = restoreToken;
   reset.onclick = () => {
    const state = getState(); if (!state || !active || busy) return;
-   edits.clear(); editVersion++; acceptState(state); message('已载入最新计划。');
+   edits.clear(); sourceEdits = null; editVersion++; acceptState(state); message('已载入最新计划。');
   };
   refresh.onclick = refreshState;
   form.onsubmit = submit;
@@ -320,7 +349,7 @@ export function createManagement({getState,getPassword,onRefresh,onOpenPlanJSON}
   const state = getState(); if (!state) return;
   if ((state.plan_request_id || '') !== revision) { message('云端计划版本已变化。草稿已保留，请先放弃草稿并载入最新计划，再重新编辑。'); return; }
   let plans;
-  try { plans = buildPlans(baseline,edits); }
+  try { plans = buildPlans(baseline,edits); if (sourceEdits) plans.sources = copy(sourceEdits); }
   catch (error) { message(error.message); return; }
   let password = getPassword(); const authorization = token || ui.token.value.trim();
   if (!password || !authorization) { password = ''; message('请先解锁并输入 GitHub 授权 Token。'); return; }
@@ -348,7 +377,7 @@ export function createManagement({getState,getPassword,onRefresh,onOpenPlanJSON}
    pending = {requestId,submittedEdit};
    message('已提交，等待云端发布；尚未确认生效。');
   } catch { if (valid(version)) message('加密、存储或网络请求失败，未确认提交，请检查后重试。'); }
-  finally { password = ''; if (valid(version)) { busy = false; ui.save.disabled = !ui.device.value; ui.reset.disabled = false; } }
+  finally { password = ''; if (valid(version)) { busy = false; ui.save.disabled = false; ui.reset.disabled = false; } }
   if (valid(version)) render();
  }
  function reportPreview(report) { return report.status === 'preview' || report.is_final === false || report.is_preview === true; }
@@ -427,6 +456,16 @@ export function createManagement({getState,getPassword,onRefresh,onOpenPlanJSON}
   });
   reportCards = next; reportSignature = signature; filterReports();
  }
+ function renderSources(state) {
+  for (const key of ['direct','mail']) {
+   const source = object(state.sources?.[key]) ? state.sources[key] : {};
+   const published = baseline.sources[key] ? '已开启' : '已关闭';
+   const execution = source.enabled === true ? '本轮已启用' : source.enabled === false ? '本轮未启用' : '本轮启用状态未知';
+   const status = {disabled:'未启用',not_configured:'尚未配置',ok:key === 'mail' ? '导入完成（以导入位置数为准）' : '本轮检查完成（新位置以设备采样为准）',partial:'部分完成',error:key === 'mail' ? '导入失败' : '查询失败',pending:'等待执行',unknown:'尚未验证',not_verified:'尚未验证'}[source.status] || '尚未验证';
+   const configured = key === 'mail' ? (source.configured === true ? ' · 已配置（不代表导入成功）' : source.configured === false ? ' · 尚未配置' : ' · 配置状态未知') : '';
+   ui.sourceStatuses[key].textContent = '已发布计划：' + published + ' · ' + execution + configured + ' · 最近结果：' + status;
+  }
+ }
  function renderMail(state) {
   const mail = object(state.mail) ? state.mail : {};
   const status = {disabled:'未启用',not_configured:'尚未配置',ok:'导入完成',partial:'部分内容已跳过',error:'导入失败'}[mail.status] || '暂无状态';
@@ -446,15 +485,16 @@ export function createManagement({getState,getPassword,onRefresh,onOpenPlanJSON}
   if (pending && state.plan_request_id === pending.requestId) {
    const untouched = editVersion === pending.submittedEdit;
    pending = null;
-   if (untouched) { edits.clear(); acceptState(state); }
+   if (untouched) { edits.clear(); sourceEdits = null; acceptState(state); }
    else { baseline = plansFromState(state); revision = state.plan_request_id || ''; renderPlanSummary(); }
    message(untouched ? '已生效：云端已发布本次计划。' : '已生效：云端已发布上次提交；当前仍有未保存修改。');
-  } else if (!edits.size && !busy && !pending) acceptState(state);
-  if (edits.size && revision !== (state.plan_request_id || '')) message('云端计划版本已变化，草稿已保留。请先放弃草稿并载入最新计划，再重新编辑。');
+  } else if (!edits.size && !sourceEdits && !busy && !pending) acceptState(state);
+  if ((edits.size || sourceEdits) && revision !== (state.plan_request_id || '')) message('云端计划版本已变化，草稿已保留。请先放弃草稿并载入最新计划，再重新编辑。');
   ui.xiaomiStatus.textContent = typeof state.error === 'string' && /\b401\b/.test(state.error)
    ? '已发布状态报告：小米接口 HTTP 401，当前展示可能为历史数据。请重新授权并通过新一轮采集核验。'
    : state.error ? '已发布状态存在采集异常；当前小米会话有效性未在此页验证，请检查 Actions 和设备查询结果。'
    : '当前小米会话有效性未在此页验证；请以最新一轮采集的设备查询结果和实际采样时间为准。';
+  renderSources(state);
   renderReports(state); renderMail(state);
  }
  function lock() {
@@ -465,7 +505,7 @@ export function createManagement({getState,getPassword,onRefresh,onOpenPlanJSON}
   }
   const container = root || document.getElementById('management');
   if (container) { container.replaceChildren(); container.hidden = true; }
-  ui = null; root = null; baseline = null; revision = ''; edits.clear(); pending = null;
+  ui = null; root = null; baseline = null; revision = ''; edits.clear(); sourceEdits = null; pending = null;
   busy = restoring = false; editVersion = 0;
   reportSignature = null; reportCards.clear(); reportItems = [];
  }
