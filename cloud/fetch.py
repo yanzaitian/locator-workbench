@@ -19,28 +19,46 @@ class CollectorError(RuntimeError):
 
 
 def collect(client, previous=None, plans=None, now=None):
+    plans = {} if plans is None else plans
+    schedule.validate_cloud_plans(plans)
+    sources = schedule.cloud_sources(plans)
     now = now or common.now_utc()
     stamp = common.utc_iso(now)
     state = copy.deepcopy(previous or {"devices": []})
     state.update(updated=stamp, error=None)
-    plans = plans or {}
     # Keep the non-secret plan definition with the encrypted state so the
     # dashboard can export a complete, round-trippable cloud-plans.json.
     state["plan"] = {
+        "sources": sources.copy(),
+        "devices": copy.deepcopy(plans.get("devices") or {}),
         "schedule": copy.deepcopy(plans.get("schedule") or {}),
         "holidays": copy.deepcopy(plans.get("holidays") or {}),
     }
+    state["sources"] = {"direct": {"enabled": sources["direct"], "status": "disabled"}}
     rows = {d["device_id"]: d for d in state["devices"]}
+    # Reset prior success messages even for devices absent from today's list.
+    for row in rows.values():
+        if row.get("source") == "mail" or row["device_id"].startswith("mail:"):
+            row["query_status"] = "等待邮件导入（保留历史位置）"
+        else:
+            row["query_status"] = ("本次未列出设备（保留历史位置）" if sources["direct"]
+                                   else "直接查询已停用，显示历史位置")
+    if not sources["direct"]:
+        return state
+    direct = state["sources"]["direct"]
+    direct["status"] = "ok"
     try:
         listed = client.device_list()
         if not listed:
             raise xiaomi_cloud.DeviceListError("empty_list")
     except Exception as exc:
         category = xiaomi_cloud.device_list_diagnostic(exc)
-        if not rows:
-            raise CollectorError("device_list_unavailable:" + category) from None
+        direct["status"] = "error"
+        direct["error"] = "device_list_unavailable:" + category
         state["error"] = "设备列表获取失败（%s），显示历史数据" % category
         for row in rows.values():
+            if row.get("source") == "mail" or row["device_id"].startswith("mail:"):
+                continue
             row["query_status"] = "设备列表失败（%s），显示历史数据" % category
         return state
     for device in listed:
@@ -66,13 +84,16 @@ def collect(client, previous=None, plans=None, now=None):
             point = xiaomi_cloud.extract(status)
             if point:
                 old = row.get("last_point")
-                if not old or point["ts"] >= old["ts"]:
+                if not old or common.parse_time(point["ts"]) > common.parse_time(old["ts"]):
                     point["gcj_lat"], point["gcj_lon"] = common.wgs84_to_gcj02(point["lat"], point["lon"])
                     row["last_point"] = point
-                row["query_status"] = "查询成功"
+                    row["query_status"] = "查询成功"
+                else:
+                    row["query_status"] = "暂无新位置，保留上次位置"
             else:
                 row["query_status"] = "暂无新位置，保留上次位置"
         except Exception as exc:
+            direct["status"] = "error"
             row["query_status"] = "本次查询失败（%s），保留上次位置" % type(exc).__name__
     state["devices"] = list(rows.values())
     return state
@@ -94,8 +115,32 @@ def read_previous(envelope, password, previous_password=None):
     return None
 
 
+def read_mail_config(raw):
+    """Validate mailbox configuration shape before making any network request."""
+    try:
+        config = json.loads(raw or "{}")
+    except (ValueError, TypeError):
+        raise CollectorError("invalid_mail_config:invalid_json") from None
+    if not isinstance(config, dict):
+        raise CollectorError("invalid_mail_config:invalid_schema")
+    conf = config.get("imap", config)
+    if not isinstance(conf, dict):
+        raise CollectorError("invalid_mail_config:invalid_schema")
+    fields = {
+        "enabled": bool,
+        **dict.fromkeys(("host", "user", "password", "folder", "sender_contains",
+                         "subject_contains", "device_id"), str),
+        **dict.fromkeys(("port", "max_messages", "max_message_bytes",
+                         "max_attachment_bytes", "max_points"), int),
+    }
+    for key, expected in fields.items():
+        if key in conf and type(conf[key]) is not expected:
+            raise CollectorError("invalid_mail_config:invalid_schema")
+    return config
+
+
 def main():
-    required = ("LOCATOR_PASSWORD", "XM_TOKEN", "XM_UID")
+    required = ("LOCATOR_PASSWORD",)
     missing = [name for name in required if not os.environ.get(name)]
     if missing:
         raise CollectorError("missing_required_secrets:" + ",".join(missing))
@@ -122,15 +167,40 @@ def main():
         raise CollectorError("invalid_cloud_plans:" + type(exc).__name__) from None
     if len(password) < 12:
         raise CollectorError("invalid_locator_password_length")
-    result = collect(xiaomi_cloud.Client(os.environ["XM_TOKEN"], os.environ["XM_UID"]), previous, plans)
-    result["plan"]["devices"] = copy.deepcopy(plans.get("devices") or {})
+    sources = schedule.cloud_sources(plans)
+    try:
+        mail_config = read_mail_config(os.environ.get("XM_MAIL_CONFIG"))
+    except CollectorError:
+        if sources["mail"]:
+            raise
+        mail_config = {}
+    client = None
+    if sources["direct"]:
+        missing = [name for name in ("XM_TOKEN", "XM_UID") if not os.environ.get(name)]
+        if missing:
+            raise CollectorError("missing_required_secrets:" + ",".join(missing))
+        client = xiaomi_cloud.Client(os.environ["XM_TOKEN"], os.environ["XM_UID"])
+    result = collect(client, previous, plans)
     result["plan_request_id"] = revision
-    mail_config = json.loads(os.environ.get("XM_MAIL_CONFIG") or "{}")
     result = import_mail(result, mail_config)
+    if result.get("mail", {}).get("status") in ("error", "partial"):
+        message = "邮件定位导入失败（%s）" % result["mail"].get("error", "import_failed")
+        result["error"] = "; ".join(filter(None, (result.get("error"), message)))
+    if (not sources["direct"] and
+            result.get("sources", {}).get("mail", {}).get("status") == "not_configured"):
+        result["error"] = "邮件定位导入未配置（仅导入收到的位置，不发起设备定位）"
     result = enrich_state(result, deepseek_key=os.environ.get("DEEPSEEK_API_KEY"),
                           summarizer=summarize_deepseek)
     if not any(row.get("last_point") for row in result.get("devices", [])):
-        raise CollectorError("no_usable_location; state file unchanged")
+        errors = [result.get("sources", {}).get("direct", {}).get("error")]
+        if result.get("mail", {}).get("error"):
+            errors.append("mail_import_failed:" + result["mail"]["error"])
+        if (not sources["direct"] and
+                result.get("sources", {}).get("mail", {}).get("status") == "not_configured"):
+            errors.append("mail_not_configured")
+        detail = "; ".join(filter(None, errors))
+        raise CollectorError((detail + "; " if detail else "") +
+                             "no_usable_location; state file unchanged")
     target.parent.mkdir(exist_ok=True)
     tmp = target.with_suffix(".tmp")
     tmp.write_text(json.dumps(encrypt(result, password)), encoding="utf-8")
