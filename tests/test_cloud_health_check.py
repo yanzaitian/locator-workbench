@@ -169,7 +169,7 @@ def test_script_entry_point_from_another_directory(tmp_path):
     assert result.stderr == ""
 
 # Runtime checks use a fixed clock and synthetic locations only. Older points
-# remain valid by design: publication freshness is not device freshness.
+# remain valid for legacy snapshots without an explicit device plan.
 NOW = dt.datetime(2026, 10, 29, 12, tzinfo=dt.timezone.utc)
 
 
@@ -352,3 +352,158 @@ def test_main_runtime_failure_prints_only_safe_code(tmp_path, kind, code):
     output = io.StringIO()
     assert health_check.main(target, PASSWORD, stdout=output) == 1
     assert output.getvalue() == f"{health_check.ERROR_PREFIX}{code}\n"
+
+# An explicit cloud plan also requires fresh points for active direct devices.
+def planned_state(age_minutes=120):
+    state = runtime_state()
+    state["plan"] = {
+        "sources": {"direct": True, "mail": True},
+        "schedule": {"enabled": True, "skip_holidays": False,
+                     "default": {"enabled": True, "start": "00:00", "end": "00:00",
+                                 "interval_minutes": 10}},
+        "devices": {}, "holidays": {},
+    }
+    state["devices"][0]["last_point"]["ts"] = (NOW - dt.timedelta(minutes=age_minutes)).isoformat()
+    return state
+
+
+def assert_runtime_error(state, code, now=NOW):
+    before = copy.deepcopy(state)
+    with pytest.raises(health_check.HealthCheckError) as exc:
+        health_check.validate_state(state, runtime=True, now=now)
+    assert exc.value.code == code
+    assert state == before
+
+
+def test_recent_publication_and_query_do_not_hide_stale_planned_point():
+    state = planned_state()
+    state["devices"][0].update(last_query=NOW.isoformat(), query_status="查询成功")
+    assert_runtime_error(state, "DEVICE_LOCATION_STALE")
+
+
+@pytest.mark.parametrize("interval,age,stale", [
+    (10, 39, False), (10, 40, False), (10, 40.001, True),
+    (60, 89, False), (60, 90, False), (60, 90.001, True),
+    (120, 149, False), (120, 150, False), (120, 150.001, True),
+])
+def test_planned_point_deadline_uses_global_interval_and_grace(interval, age, stale):
+    state = planned_state(age)
+    state["plan"]["schedule"]["default"]["interval_minutes"] = interval
+    if stale:
+        assert_runtime_error(state, "DEVICE_LOCATION_STALE")
+    else:
+        health_check.validate_state(state, runtime=True, now=NOW)
+
+
+def test_each_active_device_is_checked_even_when_another_has_a_current_point():
+    state = planned_state(0)
+    old = copy.deepcopy(state["devices"][0])
+    old["device_id"] = "second-synthetic-device"
+    old["last_point"]["ts"] = (NOW - dt.timedelta(hours=2)).isoformat()
+    state["devices"].append(old)
+    assert_runtime_error(state, "DEVICE_LOCATION_STALE")
+
+
+def test_device_interval_override_is_used():
+    state = planned_state(100)
+    state["plan"]["devices"]["synthetic-device"] = {"interval_minutes": 120}
+    health_check.validate_state(state, runtime=True, now=NOW)
+
+
+def test_independent_schedule_overrides_device_interval():
+    state = planned_state(100)
+    state["plan"]["devices"]["synthetic-device"] = {
+        "interval_minutes": 120,
+        "plan_json": json.dumps(state["plan"]["schedule"]),
+    }
+    assert_runtime_error(state, "DEVICE_LOCATION_STALE")
+
+
+@pytest.mark.parametrize("change", ["device_disabled", "source_disabled", "schedule_disabled",
+                                    "outside_window", "mail_source", "mail_prefix", "holiday"])
+def test_plans_allow_history_when_direct_device_is_not_expected_to_collect(change):
+    state = planned_state()
+    plan = state["plan"]
+    if change == "device_disabled":
+        plan["devices"]["synthetic-device"] = {"enabled": False}
+    elif change == "source_disabled":
+        plan["sources"]["direct"] = False
+    elif change == "schedule_disabled":
+        plan["schedule"]["enabled"] = False
+    elif change == "outside_window":
+        plan["schedule"]["default"].update(start="09:00", end="17:00")
+    elif change == "mail_source":
+        state["devices"][0]["source"] = "mail"
+    elif change == "mail_prefix":
+        state["devices"][0]["device_id"] = "mail:synthetic-device"
+    elif change == "holiday":
+        plan["schedule"]["skip_holidays"] = True
+        plan["holidays"]["statutory"] = ["2026-10-29"]
+    health_check.validate_state(state, runtime=True, now=NOW)
+
+
+def test_new_collection_window_has_thirty_minutes_to_get_a_point():
+    state = planned_state()
+    # NOW is 20:00 Beijing; the 19:40 window has just opened.
+    state["plan"]["schedule"]["default"].update(start="19:40", end="21:00")
+    health_check.validate_state(state, runtime=True, now=NOW)
+    later = NOW + dt.timedelta(minutes=11)
+    state["updated"] = later.isoformat()
+    assert_runtime_error(state, "DEVICE_LOCATION_STALE", now=later)
+
+
+def test_overnight_previous_day_window_is_checked():
+    state = planned_state()
+    # Friday 01:00 Beijing belongs to Thursday's overnight window.
+    now = dt.datetime(2026, 10, 29, 17, tzinfo=dt.timezone.utc)
+    state["updated"] = now.isoformat()
+    state["plan"]["schedule"]["default"].update(start="23:00", end="02:00")
+    state["plan"]["schedule"]["days"] = {"5": {"enabled": False}}
+    assert_runtime_error(state, "DEVICE_LOCATION_STALE", now=now)
+
+
+def test_adjusted_workday_is_not_mistaken_for_a_skipped_holiday():
+    state = planned_state()
+    plan = state["plan"]
+    plan["schedule"].update(skip_holidays=True,
+        holiday_workday={"enabled": True, "start": "00:00", "end": "00:00", "interval_minutes": 10})
+    plan["schedule"]["days"] = {"4": {"enabled": False}}
+    plan["holidays"] = {"statutory": ["2026-10-28"], "workdays": ["2026-10-29"]}
+    assert_runtime_error(state, "DEVICE_LOCATION_STALE")
+
+
+def test_a_gap_inside_grace_period_prevents_premature_stale_alarm():
+    state = planned_state()
+    now = dt.datetime(2026, 10, 29, 16, 20, tzinfo=dt.timezone.utc)
+    state["updated"] = now.isoformat()
+    state["plan"]["schedule"]["default"].update(start="23:00", end="00:00")
+    state["plan"]["schedule"]["days"] = {
+        "5": {"enabled": True, "start": "00:15", "end": "02:00", "interval_minutes": 10}}
+    health_check.validate_state(state, runtime=True, now=now)
+
+
+def test_missing_active_point_is_not_hidden_by_another_devices_point():
+    state = planned_state(0)
+    state["devices"].append({"device_id": "synthetic-missing", "last_point": None})
+    assert_runtime_error(state, "DEVICE_LOCATION_MISSING")
+
+
+@pytest.mark.parametrize("plan", [None, [], {"devices": []},
+    {"sources": {"direct": "private-invalid"}},
+    {"schedule": {"default": {"interval_minutes": 0}}}])
+def test_malformed_explicit_plan_fails_with_safe_category(plan):
+    state = planned_state()
+    state["plan"] = plan
+    assert_runtime_error(state, "STATE_PLAN_INVALID")
+
+
+def test_explicit_plan_rejects_missing_device_identity():
+    state = planned_state(0)
+    del state["devices"][0]["device_id"]
+    assert_runtime_error(state, "DEVICE_PLAN_INVALID")
+
+
+def test_legacy_structure_only_validation_does_not_claim_planned_freshness():
+    state = planned_state()
+    health_check.validate_state(state)
+    assert_runtime_error(state, "DEVICE_LOCATION_STALE")

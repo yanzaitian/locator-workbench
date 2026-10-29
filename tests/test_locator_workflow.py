@@ -1,6 +1,12 @@
 """Offline guards for collector/Pages separation; no credentials or GitHub calls."""
 from pathlib import Path
+import itertools
+import os
 import re
+import shutil
+import subprocess
+
+import pytest
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/locator.yml"
 
@@ -47,7 +53,7 @@ def test_pages_ignore_collection_failure_but_require_successful_publish_dependen
 def test_collection_failure_is_reported_after_deployment_as_a_real_failure():
     configured = steps()
     final = configured[-1]
-    assert field(final, "if") == "${{ always() && steps.collect.outcome == 'failure' }}"
+    assert field(final, "if") == "${{ always() && (steps.collect.outcome == 'failure' || steps.health.outcome == 'failure') }}"
     assert field(final, "continue-on-error") is None
     assert re.search(r"^          exit 1$", final, re.MULTILINE)
     assert "::error::" in final
@@ -70,7 +76,72 @@ def test_published_fallback_cannot_report_a_healthy_workflow():
     configured = steps()
     health = next(s for s in configured if field(s, "run") == "python cloud/health_check.py")
     assert field(health, "if") == "${{ !cancelled() && steps.collect.outcome == 'success' && steps.deployment.outcome == 'success' }}"
+    assert field(health, "id") == "health"
     assert field(health, "continue-on-error") is None
     assert "LOCATOR_PASSWORD: ${{ secrets.LOCATOR_PASSWORD }}" in health
     deployment = next(s for s in configured if field(s, "id") == "deployment")
     assert configured.index(health) > configured.index(deployment)
+    assert configured[-2] == health
+
+@pytest.mark.parametrize("collect,health,cancelled", list(itertools.product(
+    ("success", "failure", "skipped", "cancelled"),
+    ("success", "failure", "skipped", "cancelled"),
+    (False, True),
+)))
+def test_failure_report_condition_uses_actual_outcomes_even_after_failure_or_cancellation(
+    collect, health, cancelled
+):
+    condition = field(steps()[-1], "if")
+    # Evaluate the configured expression with GitHub's implicit success() guard:
+    # a status function is required to report after an earlier health failure.
+    expression = condition.removeprefix("${{").removesuffix("}}").strip()
+    expression = expression.replace("steps.collect.outcome", repr(collect))
+    expression = expression.replace("steps.health.outcome", repr(health))
+    expression = expression.replace("&&", " and ").replace("||", " or ")
+    has_status = re.search(r"\b(?:always|success|failure|cancelled)\(\)", expression)
+    status = {
+        "always": lambda: True,
+        "success": lambda: not cancelled and collect == health == "success",
+        "failure": lambda: "failure" in (collect, health),
+        "cancelled": lambda: cancelled,
+    }
+    actual = (bool(has_status) or status["success"]()) and eval(
+        expression, {"__builtins__": {}}, status
+    )
+    assert actual == (collect == "failure" or health == "failure")
+
+
+@pytest.mark.parametrize("collect,health,expected,forbidden", [
+    ("failure", "skipped", "云端采集失败", "发布数据健康检查失败"),
+    ("success", "failure", "发布数据健康检查失败", "历史加密状态未更新"),
+    ("failure", "failure", "云端采集失败", "发布数据健康检查失败"),
+])
+def test_failure_report_shell_distinguishes_collection_and_health_without_secrets(
+    collect, health, expected, forbidden
+):
+    report = steps()[-1]
+    assert "COLLECT_OUTCOME: ${{ steps.collect.outcome }}" in report
+    assert "secrets." not in report
+    assert "steps.collect.conclusion" not in report
+    script = report.split("        run: |\n", 1)[1].split("\n        env:", 1)[0]
+    script = "\n".join(line.removeprefix("          ") for line in script.splitlines())
+    bash = shutil.which("bash")
+    assert bash is not None, "Bash is required to execute the Actions report script"
+    sentinel = "TEST_SECRET_MUST_NOT_APPEAR"
+    result = subprocess.run(
+        [bash, "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script],
+        env={**os.environ, "COLLECT_OUTCOME": collect,
+             "HEALTH_OUTCOME": health, "LOCATOR_PASSWORD": sentinel, "XM_TOKEN": sentinel},
+        capture_output=True, text=True, encoding="utf-8", timeout=10,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 1
+    assert output.count("::error::") == 1
+    assert expected in output
+    assert forbidden not in output
+    assert sentinel not in output
+    if collect == "failure":
+        assert "历史加密状态未更新" in output
+    else:
+        assert "历史位置" in output
+        assert "不代表获取到新位置" in output
