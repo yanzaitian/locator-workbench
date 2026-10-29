@@ -33,3 +33,43 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 
 /* Independent collection sources remain readable on phones and tablets. */
 .collection-sources{min-width:0;margin:0 0 22px;padding:16px;border:1px solid var(--line);border-radius:12px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.collection-sources>legend{padding:0 6px;font-weight:700}.collection-sources>p{grid-column:1/-1;margin:0;line-height:1.8}.collection-source{min-width:0;padding:14px;border:1px solid var(--line);border-radius:10px;background:#f8fafc;overflow-wrap:anywhere}.collection-source .management-field{display:flex;flex-direction:row-reverse;justify-content:flex-end;align-items:center;gap:12px;min-height:44px;font-weight:700}.collection-source input[type=checkbox]{flex:0 0 22px;width:22px;height:22px;margin:0;accent-color:var(--blue-dark)}.collection-source p{line-height:1.8;margin:10px 0 0}.collection-source-status{font-size:13px;color:#415775}@media(max-width:760px){.collection-sources{grid-template-columns:1fr;padding:12px}.collection-source{padding:12px}}
+
+
+/* 七分区的补充样式：来源状态、快捷入口、速览、历史与授权 */
+.source-strip{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.status-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid #d7e0ea;border-radius:999px;padding:4px 12px;font-size:13px;background:#f7f9fc;color:#33465c}
+.status-chip.warn{border-color:#f0b26b;background:#fff7ea;color:#8a5200}
+.overview-links{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin:10px 0 4px}
+.quick-link{text-align:left;border:1px solid #d7e0ea;border-radius:12px;padding:12px 14px;background:#fff;cursor:pointer;display:flex;flex-direction:column;gap:3px}
+.quick-link:hover{border-color:#8fb0e8;background:#f5f9ff}
+.quick-link b{font-size:15px;color:#20344c}
+.quick-link span{font-size:12px;color:#5c7089}
+.overview-devices{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-top:10px}
+.mini-device{border:1px solid #dde5ef;border-radius:12px;padding:12px;background:#fff}
+.mini-device.warn{border-color:#f0b26b;background:#fffaf2}
+.mini-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.mini-head b{font-size:14px;color:#1d3048;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mini-device p{margin:4px 0 0;font-size:13px;color:#3f5470}
+.history-content{display:flex;flex-direction:column;gap:14px}
+.history-block{border:1px solid #dde5ef;border-radius:12px;padding:14px;background:#fff}
+.history-block h3{margin:0 0 8px;font-size:15px}
+.history-list{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.history-row{display:grid;grid-template-columns:minmax(150px,1.2fr) minmax(130px,1fr) 90px 60px;gap:8px;align-items:center;font-size:13px;padding:6px 0;border-bottom:1px dashed #eef2f7}
+.history-row:last-child{border-bottom:0}
+.history-row a{color:#2563c9;text-decoration:none}
+.auth-content{display:flex;flex-direction:column;gap:14px}
+.auth-card{border:1px solid #dde5ef;border-radius:12px;padding:16px;background:#fff}
+.auth-card h3{margin:0 0 8px;font-size:15px}
+.auth-card p{margin:6px 0;font-size:13px;color:#3f5470;line-height:1.7}
+.auth-device-list{margin:10px 0 0;padding-left:18px;font-size:13px;color:#3f5470}
+.auth-device-list li{margin:4px 0}
+@media (max-width:720px){
+ .overview-links{grid-template-columns:1fr 1fr}
+ .history-row{grid-template-columns:1fr 1fr;row-gap:2px}
+ .history-row span:nth-child(3),.history-row span:nth-child(4),.history-row a{grid-column:span 1}
+}
+@media (max-width:420px){
+ .overview-links{grid-template-columns:1fr}
+ .source-strip{gap:6px}
+ .status-chip{font-size:12px;padding:3px 9px}
+}

@@ -16,17 +16,20 @@
     <a class="brand" href="./" aria-label="定位工作台首页"><span class="brand-mark" aria-hidden="true">L</span><span><strong>定位工作台</strong><small>LOCATION DESK</small></span></a>
     <nav id="primary-navigation" class="primary-navigation" aria-label="主导航" hidden>
       <p class="nav-caption">工作区</p>
-      <button type="button" class="nav-item active" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true">⌂</span><span>设备总览</span></button>
+      <button type="button" class="nav-item active" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true">⌂</span><span>总览</span></button>
+      <button type="button" class="nav-item" data-view="devices" aria-current="false"><span class="nav-icon" aria-hidden="true">▣</span><span>设备</span></button>
+      <button type="button" class="nav-item" data-view="history" aria-current="false"><span class="nav-icon" aria-hidden="true">↺</span><span>位置历史</span></button>
       <button type="button" class="nav-item" data-view="plans" aria-current="false"><span class="nav-icon" aria-hidden="true">◷</span><span>采集计划</span></button>
-      <button type="button" class="nav-item" data-view="reports" aria-current="false"><span class="nav-icon" aria-hidden="true">▤</span><span>月度报告</span></button>
+      <button type="button" class="nav-item" data-view="mail" aria-current="false"><span class="nav-icon" aria-hidden="true">✉</span><span>邮箱来源</span></button>
       <button type="button" class="nav-item" data-view="settings" aria-current="false"><span class="nav-icon" aria-hidden="true">⚙</span><span>系统设置</span></button>
+      <button type="button" class="nav-item" data-view="auth" aria-current="false"><span class="nav-icon" aria-hidden="true">⚿</span><span>授权状态</span></button>
     </nav>
     <div class="sidebar-note"><span class="cloud-dot" aria-hidden="true"></span><span><strong>云端工作台</strong><small>可在设备关机时访问</small></span></div>
   </aside>
 
   <main id="main-content" class="main-content" tabindex="-1">
     <header class="topbar">
-      <div><p class="eyebrow">云端设备管理</p><h1>定位工作台</h1><p class="subtitle">查看设备状态、采集计划与月度报告</p></div>
+      <div><p class="eyebrow">云端设备管理</p><h1>定位工作台</h1><p class="subtitle">总览、设备、位置历史、采集计划、邮箱来源、系统设置与授权状态</p></div>
       <div class="toolbar" id="tools" hidden>
         <button id="refresh" class="button button-secondary" type="button"><span aria-hidden="true">↻</span> 刷新数据</button>
         <button id="lock" class="button button-quiet" type="button">锁定</button>
@@ -45,14 +48,41 @@
 
     <div id="status" class="status" role="status" aria-live="polite" hidden></div>
 
-    <section id="overview" class="view-panel" data-view-panel="overview" aria-label="设备总览" hidden>
-      <div class="section-intro"><div><p class="eyebrow">一览</p><h2>设备总览</h2><p>位置时间与采集时间分开展示；历史数据不会标记为实时。</p></div><p id="updated" class="updated-label"></p></div>
+    <section id="overview" class="view-panel" data-view-panel="overview" aria-label="总览" hidden>
+      <div class="section-intro"><div><p class="eyebrow">一览</p><h2>总览</h2><p>位置时间与采集时间分开展示；历史数据不会标记为实时。</p></div><p id="updated" class="updated-label"></p></div>
       <section id="summary" class="summary" aria-label="设备数据摘要" hidden></section>
-      <section class="overview-surface" aria-labelledby="device-status-title">
-        <div class="section-head"><div><h3 id="device-status-title">设备状态</h3><p>展开设备详情查看采集结果、来源与时间；地图展示最后记录的位置</p></div></div>
-        <details class="schedule-details"><summary>查看全局采集规则</summary><p id="schedule-summary" class="schedule-summary" hidden></p></details>
-        <section id="device-section" hidden><section id="cards" class="cards"></section></section>
-      </section>
+      <div id="overview-sources" class="source-strip" aria-label="位置来源状态"></div>
+      <div id="overview-links" class="overview-links" aria-label="功能入口">
+        <button type="button" class="quick-link" data-view="devices"><b>设备</b><span>查看全部设备与采集说明</span></button>
+        <button type="button" class="quick-link" data-view="history"><b>位置历史</b><span>按设备查看已保存的采样</span></button>
+        <button type="button" class="quick-link" data-view="plans"><b>采集计划</b><span>时段、间隔与来源开关</span></button>
+        <button type="button" class="quick-link" data-view="mail"><b>邮箱来源</b><span>只读导入与状态</span></button>
+        <button type="button" class="quick-link" data-view="settings"><b>系统设置</b><span>授权、密码与运行方式</span></button>
+        <button type="button" class="quick-link" data-view="auth"><b>授权状态</b><span>小米、GitHub 与邮箱授权</span></button>
+        <button type="button" class="quick-link" data-view="reports"><b>月度报告</b><span>已完成月份统计与说明</span></button>
+      </div>
+      <div id="overview-devices" class="overview-devices" aria-label="设备状态速览"></div>
+    </section>
+
+    <section id="devices" class="view-panel" data-view-panel="devices" aria-label="设备" hidden>
+      <div class="section-intro"><div><p class="eyebrow">设备</p><h2>设备</h2><p>展开“查看设备详情与采集说明”，可看到最近查询时间、实际位置采样时间、来源状态与错误。</p></div></div>
+      <details class="schedule-details"><summary>查看全局采集规则</summary><p id="schedule-summary" class="schedule-summary" hidden></p></details>
+      <section id="device-section" hidden><section id="cards" class="cards"></section></section>
+    </section>
+
+    <section id="history" class="view-panel" data-view-panel="history" aria-label="位置历史" hidden>
+      <div class="section-intro"><div><p class="eyebrow">位置历史</p><h2>位置历史</h2><p>展示已保存的真实采样；样本不代表连续轨迹，也不等于设备一直在线。</p></div></div>
+      <div id="history-content" class="history-content"></div>
+    </section>
+
+    <section id="mail" class="view-panel" data-view-panel="mail" aria-label="邮箱来源" hidden>
+      <div class="section-intro"><div><p class="eyebrow">邮箱来源</p><h2>邮箱来源</h2><p>只读取已经收到的定位附件，不主动命令设备定位。需要 XM_MAIL_CONFIG 与来源开关。</p></div></div>
+      <div id="mail-content" class="mail-content"></div>
+    </section>
+
+    <section id="auth" class="view-panel" data-view-panel="auth" aria-label="授权状态" hidden>
+      <div class="section-intro"><div><p class="eyebrow">授权状态</p><h2>授权状态</h2><p>小米会话、GitHub 计划发布授权与邮箱导入授权分别管理，不能相互替代。</p></div></div>
+      <div id="auth-content" class="auth-content"></div>
     </section>
 
     <section id="management" hidden aria-label="计划、报告和系统设置"></section>
