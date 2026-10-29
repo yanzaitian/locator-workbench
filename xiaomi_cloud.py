@@ -4,6 +4,7 @@
 """
 import json
 import time
+import threading
 
 import requests
 
@@ -124,69 +125,253 @@ def login(username, password):
 
 
 QR_SESSIONS = {}
+QR_LOCK = threading.RLock()
+QR_TTL_SECONDS = 300
+QR_MAX_SESSIONS = 8
+
+
+def _prune_qr_sessions():
+    now = time.time()
+    for ticket, item in list(QR_SESSIONS.items()):
+        if now - item.get("created", now) >= QR_TTL_SECONDS:
+            # Never close a Session while another request is polling it.
+            if item.get("busy"):
+                continue
+            QR_SESSIONS.pop(ticket, None)
+            item["session"].close()
+
 
 
 def qr_start():
-    """生成小米扫码登录二维码，返回 (ticket, 二维码地址)。"""
+    """Create a QR session; retry a transient upstream failure once."""
+    for attempt in range(2):
+        try:
+            return _qr_start_once()
+        except requests.RequestException:
+            if attempt:
+                raise XiaomiError("小米二维码网络请求失败，请稍后重试") from None
+
+
+def _qr_start_once():
     s = requests.Session()
     s.headers.update({"User-Agent": UA})
-    r = s.get("https://i.mi.com/api/user/login", params={
-        "ts": _ts(), "followUp": "https://i.mi.com/", "_locale": "zh_CN"}, timeout=30)
-    login_url = (r.json().get("data") or {}).get("loginUrl")
-    if not login_url:
-        raise XiaomiError("无法获取登录地址")
-    from urllib.parse import urlparse
-    query = urlparse(login_url).query
-    r2 = s.get("https://account.xiaomi.com/longPolling/loginUrl?" + query + "&_json=true", timeout=30)
-    data = _json(r2.text)
-    lp = data.get("lp")
-    qr = data.get("qr")
-    if not lp or not qr:
-        raise XiaomiError("二维码生成失败")
-    QR_SESSIONS[lp] = {"session": s, "created": time.time()}
-    return lp, qr, data.get("qrTips", "")
-
-
-def qr_poll(ticket):
-    """查询扫码结果；成功返回 (token, uid)。"""
-    item = QR_SESSIONS.get(ticket)
-    if not item:
-        return None, "expired"
-    s = item["session"]
+    retained = False
     try:
-        r = s.get(ticket, timeout=35)
-        data = _json(r.text)
-    except Exception:
-        return None, "waiting"
-    if data.get("code") == 0 and data.get("location"):
+        r = s.get("https://i.mi.com/api/user/login", params={
+            "ts": _ts(), "followUp": "https://i.mi.com/", "_locale": "zh_CN"}, timeout=30)
+        r.raise_for_status()
+        login_url = (r.json().get("data") or {}).get("loginUrl")
+        if not login_url:
+            raise XiaomiError("无法获取登录地址")
+        from urllib.parse import urlparse
+        query = urlparse(login_url).query
+        r2 = s.get("https://account.xiaomi.com/longPolling/loginUrl?" + query + "&_json=true", timeout=30)
+        r2.raise_for_status()
+        data = _json(r2.text)
+        lp, qr = data.get("lp"), data.get("qr")
+        if not isinstance(lp, str) or not lp or not isinstance(qr, str) or not qr:
+            raise XiaomiError("二维码生成失败")
+        with QR_LOCK:
+            _prune_qr_sessions()
+            while len(QR_SESSIONS) >= QR_MAX_SESSIONS:
+                oldest = next((key for key, item in QR_SESSIONS.items() if not item.get("busy")), None)
+                if oldest is None:
+                    raise XiaomiError("扫码请求过多，请稍后重试")
+                QR_SESSIONS.pop(oldest)["session"].close()
+            QR_SESSIONS[lp] = {"session": s, "created": time.time()}
+            retained = True
+        return lp, qr, data.get("qrTips", "")
+    finally:
+        if not retained:
+            s.close()
+
+
+def qr_poll(ticket, include_cookies=False):
+    """Consume each QR session once; network timeouts do not mean logout."""
+    with QR_LOCK:
+        _prune_qr_sessions()
+        item = QR_SESSIONS.get(ticket)
+        if not item:
+            return None, "expired"
+        if item.get("busy"):
+            return None, "waiting"
+        item["busy"] = True
+    s = item["session"]
+    consumed = False
+    try:
         try:
-            callback = s.get(data["location"], timeout=30)
-            callback.raise_for_status()
-        except requests.RequestException:
-            return None, "授权回调网络请求失败，请重试"
-        try:
-            token, uid = find_credentials(s.cookies)
-        except XiaomiError:
-            return None, "未取得查找设备授权，请重新扫码"
-        QR_SESSIONS.pop(ticket, None)
-        return (token, uid), "ok"
-    return None, "小米未返回登录授权，请重新扫码" if data.get("desc") else "waiting"
+            r = s.get(ticket, timeout=35)
+            r.raise_for_status()
+            data = _json(r.text)
+            if not isinstance(data, dict):
+                return None, "waiting"
+        except (requests.RequestException, ValueError):
+            return None, "waiting"
+        if data.get("code") == 0 and data.get("location"):
+            try:
+                callback = s.get(data["location"], timeout=30)
+                callback.raise_for_status()
+            except requests.RequestException:
+                return None, "授权回调网络请求失败，请重试"
+            try:
+                token, uid = find_credentials(s.cookies)
+            except XiaomiError:
+                return None, "未取得查找设备授权，请重新扫码"
+            consumed = True
+            result = (token, uid, export_find_cookies(s.cookies)) if include_cookies else (token, uid)
+            return result, "ok"
+        return None, "小米未返回登录授权，请重新扫码" if data.get("desc") else "waiting"
+    finally:
+        with QR_LOCK:
+            item["busy"] = False
+            if consumed:
+                QR_SESSIONS.pop(ticket, None)
+                s.close()
+
+
+def _find_cookie_row(row):
+    """Validate a snapshot row without including its contents in errors."""
+    from http.cookiejar import Cookie
+
+    fields = {"version", "name", "value", "port", "port_specified", "domain",
+              "domain_specified", "domain_initial_dot", "path", "path_specified",
+              "secure", "expires", "discard", "comment", "comment_url", "rest", "rfc2109"}
+    def invalid():
+        raise XiaomiError("Invalid Find cookie snapshot")
+
+    if type(row) is not dict or set(row) != fields:
+        invalid()
+    for key in ("port_specified", "domain_specified", "domain_initial_dot",
+                "path_specified", "secure", "discard", "rfc2109"):
+        if type(row[key]) is not bool:
+            invalid()
+    if type(row["version"]) is not int or row["version"] not in (0, 1):
+        invalid()
+    if row["expires"] is not None and type(row["expires"]) is not int:
+        invalid()
+    for key in ("name", "value", "domain", "path"):
+        value = row[key]
+        if type(value) is not str or len(value) > 16384 or any(
+                ord(c) <= 32 or ord(c) >= 127 or c in ';,"\\' for c in value):
+            invalid()
+    name = row["name"]
+    if not name or any(c in "()<>@:/[]?={}=" for c in name):
+        invalid()
+    if name in ("serviceToken", "userId") and not row["value"]:
+        invalid()
+    domain = row["domain"]
+    bare_domain = domain.lstrip(".").lower()
+    if (not bare_domain or domain.startswith("..") or
+            any(not part or not all(c.isascii() and (c.isalnum() or c == "-")
+                                    for c in part) or part.startswith("-") or part.endswith("-")
+                for part in bare_domain.split("."))):
+        invalid()
+    if (row["domain_initial_dot"] and not domain.startswith(".")) or (
+            row["domain_initial_dot"] and not row["domain_specified"]):
+        invalid()
+    if not row["path"].startswith("/"):
+        invalid()
+    port = row["port"]
+    if port is not None and (type(port) is not str or not port or
+            any(not part.isascii() or not part.isdigit() or not 1 <= int(part) <= 65535
+                for part in port.split(","))):
+        invalid()
+    if row["port_specified"] != (port is not None):
+        invalid()
+    for key in ("comment", "comment_url"):
+        value = row[key]
+        if value is not None and (type(value) is not str or len(value) > 16384 or
+                any(ord(c) < 32 or ord(c) == 127 for c in value)):
+            invalid()
+    rest = row["rest"]
+    if type(rest) is not dict or len(rest) > 32:
+        invalid()
+    for key, value in rest.items():
+        if (type(key) is not str or not key or len(key) > 256 or
+                any(ord(c) <= 32 or ord(c) >= 127 or c in ';,"\\:=' for c in key)):
+            invalid()
+        if value is not None and type(value) is not bool and (
+                type(value) is not str or len(value) > 16384 or
+                any(ord(c) < 32 or ord(c) == 127 for c in value)):
+            invalid()
+    return Cookie(**{**row, "rest": dict(rest)})
+
+
+def _find_cookie_applies(cookie):
+    """Keep only live cookies scoped to the HTTPS Find API endpoints."""
+    domain = cookie.domain.lstrip(".").lower()
+    if cookie.is_expired() or not (domain == "i.mi.com" or (
+            domain == "mi.com" and cookie.domain_specified)):
+        return False
+    if cookie.port is not None and "443" not in cookie.port.split(","):
+        return False
+    path = cookie.path
+    return any(target == path or (target.startswith(path) and (
+        path.endswith("/") or target[len(path):].startswith("/")))
+        for target in ("/find/v3/device/status", "/find/v3/device/status/list"))
+
+
+def export_find_cookies(jar):
+    """Return JSON-safe Find cookie rows, preserving scope and expiration."""
+    rows = []
+    for cookie in jar:
+        row = {key: getattr(cookie, key) for key in (
+            "version", "name", "value", "port", "port_specified", "domain",
+            "domain_specified", "domain_initial_dot", "path", "path_specified",
+            "secure", "expires", "discard", "comment", "comment_url", "rfc2109")}
+        row["rest"] = dict(cookie._rest)
+        # Other services must never enter the persisted snapshot.
+        if not _find_cookie_applies(cookie):
+            continue
+        validated = _find_cookie_row(row)
+        if _find_cookie_applies(validated):
+            rows.append(row)
+    return rows
+
+
+def restore_find_cookies(rows):
+    """Validate snapshot structure; filter expired and unrelated cookies."""
+    if type(rows) is not list or len(rows) > 512:
+        raise XiaomiError("Invalid Find cookie snapshot")
+    jar = requests.cookies.RequestsCookieJar()
+    seen = set()
+    for row in rows:
+        cookie = _find_cookie_row(row)
+        identity = (cookie.domain, cookie.path, cookie.name)
+        if identity in seen:
+            raise XiaomiError("Invalid Find cookie snapshot")
+        seen.add(identity)
+        if _find_cookie_applies(cookie):
+            jar.set_cookie(cookie)
+    return jar
 
 
 class Client:
-    def __init__(self, service_token, user_id):
+    def __init__(self, service_token, user_id, cookies=None):
         self.token = service_token
         self.user_id = user_id
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": UA, **FIND_HEADERS})
 
-    def _headers(self):
-        return {"Cookie": "userId=%s;serviceToken=%s" % (self.user_id, self.token)}
+        if cookies is None:
+            seed = requests.cookies.RequestsCookieJar()
+            seed.set("serviceToken", service_token, domain=".i.mi.com", path="/", secure=True)
+            seed.set("userId", user_id, domain=".i.mi.com", path="/", secure=True)
+            cookies = export_find_cookies(seed)
+        elif isinstance(cookies, requests.cookies.RequestsCookieJar):
+            cookies = export_find_cookies(cookies)
+        self.session.cookies = restore_find_cookies(cookies)
+
+    def cookie_snapshot(self):
+        return export_find_cookies(self.session.cookies)
+
+    def current_credentials(self):
+        return find_credentials(self.session.cookies)
 
     def device_list(self):
         try:
             r = self.session.get("https://i.mi.com/find/v3/device/status/list",
-                                 headers=self._headers(), params={"ts": _ts()}, timeout=30,
+                                 params={"ts": _ts()}, timeout=30,
                                  allow_redirects=False)
         except requests.RequestException:
             # Request exceptions can contain URLs, cookies or response text.
@@ -213,9 +398,10 @@ class Client:
         return rows
 
     def device_status(self, device, sync_mode=0):
-        r = self.session.get("https://i.mi.com/find/v3/device/status", headers=self._headers(),
+        r = self.session.get("https://i.mi.com/find/v3/device/status",
                              params={"ts": _ts(), "targetUserId": device["userId"],
-                                     "targetFid": device["fid"], "syncMode": sync_mode}, timeout=40)
+                                     "targetFid": device["fid"], "syncMode": sync_mode}, timeout=40,
+                             allow_redirects=False)
         data = r.json() if r.status_code == 200 else {}
         if data.get("result") != "ok":
             return None
