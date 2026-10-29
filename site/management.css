@@ -73,3 +73,6 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
  .source-strip{gap:6px}
  .status-chip{font-size:12px;padding:3px 9px}
 }
+
+/* Keep authorization diagnostics and links inside narrow phone cards. */
+.auth-card{min-width:0;overflow-wrap:anywhere}.settings-links a{min-width:0;overflow-wrap:anywhere}
