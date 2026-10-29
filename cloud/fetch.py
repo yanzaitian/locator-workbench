@@ -2,6 +2,7 @@
 import copy
 import json
 import os
+import re
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -146,6 +147,31 @@ def read_mail_config(raw):
     return config
 
 
+
+def emit_source_diagnostics(state):
+    """Log only allowlisted source states, never decrypted data or API text."""
+    sources = state.get("sources")
+    sources = sources if type(sources) is dict else {}
+    for name, allowed in (
+            ("direct", {"disabled", "ok", "error"}),
+            ("mail", {"disabled", "ok", "partial", "error", "not_configured"})):
+        source = sources.get(name)
+        source = source if type(source) is dict else {}
+        status = source.get("status")
+        status = status if type(status) is str and status in allowed else "unknown"
+        diagnostic = ""
+        error = source.get("error")
+        if name == "direct" and type(error) is str:
+            if error == "missing_required_secrets":
+                diagnostic = ":missing_required_secrets"
+            elif re.fullmatch(
+                    r"device_list_unavailable:(?:http_non_200|non_json|api_rejected|"
+                    r"invalid_structure|network_error|empty_list|unexpected_error)"
+                    r"(?::http_status=[1-5][0-9]{2})?", error):
+                diagnostic = ":" + error
+        print("COLLECTOR_%s=%s%s" % (name.upper(), status, diagnostic))
+
+
 def main():
     required = ("LOCATOR_PASSWORD",)
     missing = [name for name in required if not os.environ.get(name)]
@@ -197,6 +223,7 @@ def main():
     if (not sources["direct"] and
             result.get("sources", {}).get("mail", {}).get("status") == "not_configured"):
         result["error"] = "邮件定位导入未配置（仅导入收到的位置，不发起设备定位）"
+    emit_source_diagnostics(result)
     result = enrich_state(result, deepseek_key=os.environ.get("DEEPSEEK_API_KEY"),
                           summarizer=summarize_deepseek)
     if not any(row.get("last_point") for row in result.get("devices", [])):
