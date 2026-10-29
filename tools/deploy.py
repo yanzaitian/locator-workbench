@@ -13,6 +13,7 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_FILE = ".github/workflows/locator.yml"
 REQUIRED_SECRETS = {"LOCATOR_PASSWORD", "XM_TOKEN", "XM_UID"}
+MAIL_ONLY_SECRETS = {"LOCATOR_PASSWORD", "XM_MAIL_CONFIG"}
 # Keep the workflow last: publishing it activates its scheduled trigger.
 UPLOAD = [
     "requirements-cloud.txt",
@@ -33,6 +34,7 @@ UPLOAD = [
     "site/app.js",
     "site/crypto.js",
     "site/plan-summary.js",
+    "tests/test_panels.mjs",
     WORKFLOW_FILE,
 ]
 
@@ -135,7 +137,7 @@ def enable_pages(token, repo):
     return verify_pages_workflow(token, repo)
 
 
-def missing_required_secrets(token, repo):
+def missing_required_secrets(token, repo, required=None):
     configured = set()
     page = 1
     while True:
@@ -146,12 +148,18 @@ def missing_required_secrets(token, repo):
         if len(items) < 100:
             break
         page += 1
-    return sorted(REQUIRED_SECRETS - configured)
+    return sorted((REQUIRED_SECRETS if required is None else required) - configured)
 
 
-def require_required_secrets(token, repo, command):
-    missing = missing_required_secrets(token, repo)
+def require_required_secrets(token, repo, command, mail_only=False):
+    missing = (missing_required_secrets(token, repo, MAIL_ONLY_SECRETS)
+               if mail_only else missing_required_secrets(token, repo))
     if missing:
+        if mail_only:
+            raise SystemExit(
+                "--mail-only 已停止，未上传文件、未启用 Pages、未发布 workflow、未触发 Actions："
+                "缺少必需的 GitHub Actions Secrets：%s。" % ", ".join(missing)
+            )
         if command == "all":
             raise SystemExit(
                 "缺少必需的 GitHub Actions Secrets：%s。已设置 LOCATOR_PASSWORD，"
@@ -168,6 +176,46 @@ def require_required_secrets(token, repo, command):
             "首次部署请先配置 Secrets 并使用 all；upload 仅用于已准备好的仓库。"
             % ", ".join(missing)
         )
+
+
+def verify_mail_only_plan(token, repo, branch, password):
+    """Require saved remote plans; XM_PLANS secret contents cannot be verified.
+
+    Saved plans take precedence in cloud.fetch. Never infer mail-only from a
+    local plan, secret names, or absent source switches, and never rewrite plans.
+    Require the default branch as scheduled runs also use that branch.
+    """
+    sys.path.insert(0, str(ROOT))
+    import schedule
+    from cloud.crypto_state import decrypt
+
+    try:
+        repository = api(token, "GET", f"https://api.github.com/repos/{repo}")
+        if repository.get("default_branch") != branch:
+            raise ValueError()
+        result = api(token, "GET",
+                     f"https://api.github.com/repos/{repo}/contents/cloud/plans.enc.json",
+                     params={"ref": branch})
+        if result.get("type") != "file" or result.get("encoding") != "base64":
+            raise ValueError()
+        envelope = json.loads(base64.b64decode(
+            "".join(result["content"].split()), validate=True))
+        saved = decrypt(envelope, password)
+        if not isinstance(saved, dict) or saved.get("kind") != "locator-cloud-plans-v1":
+            raise ValueError()
+        revision = saved.get("request_id")
+        if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-fA-F-]{36}", revision):
+            raise ValueError()
+        plans = schedule.validate_cloud_plans(saved["plans"])
+        if schedule.cloud_sources(plans) != {"direct": False, "mail": True}:
+            raise ValueError()
+    except Exception:
+        # Never echo decrypted plans, passwords, ciphertext, or API response text.
+        raise SystemExit(
+            "--mail-only 已停止：必须使用默认分支，且远端 cloud/plans.enc.json "
+            "须能用当前看板密码解密并确认为 direct=false、mail=true 的有效计划。"
+            "请先通过现有计划管理流程保存计划；本工具不会修改计划，也不以 XM_PLANS 名称代替验证。"
+        ) from None
 
 
 def dispatch(token, repo, branch):
@@ -220,7 +268,11 @@ def main():
     parser.add_argument("repo", nargs="?")
     parser.add_argument("--branch")
     parser.add_argument("--plans", type=Path)
+    parser.add_argument("--mail-only", action="store_true",
+                        help="仅邮箱部署；要求 XM_MAIL_CONFIG 及可解密验证的远端仅邮箱计划")
     args = parser.parse_args()
+    if args.mail_only and args.command not in ("upload", "all", "run"):
+        parser.error("--mail-only 仅支持 upload、all、run")
     if args.command == "check":
         paths = check_local_files()
         print("本地部署白名单检查通过：%d 个文件；未连接远端，未读取凭据。" % len(paths))
@@ -236,15 +288,29 @@ def main():
         "main" if args.command in ("upload", "run") else ensure_repo(token, args.repo)
     )
 
+    password = None
+    if args.mail_only:
+        password = getpass.getpass("当前看板访问密码（仅用于验证远端计划，不会显示）：")
+        if len(password) < 12:
+            raise SystemExit("访问密码至少12个字符")
+        verify_mail_only_plan(token, args.repo, branch, password)
+
+    def require_secrets(command):
+        if args.mail_only:
+            require_required_secrets(token, args.repo, command, mail_only=True)
+        else:
+            require_required_secrets(token, args.repo, command)
+
     if args.command == "upload":
-        require_required_secrets(token, args.repo, "upload")
+        require_secrets("upload")
         verify_pages_workflow(token, args.repo)
         upload(token, args.repo, branch)
         print("已上传白名单文件（workflow 最后）；未设置 Secrets，也未更改 Pages 配置。")
         return
 
     if args.command in ("secrets", "all"):
-        password = getpass.getpass("看板访问密码（至少12字符，不会显示）：")
+        if password is None:
+            password = getpass.getpass("看板访问密码（至少12字符，不会显示）：")
         if len(password) < 12:
             raise SystemExit("访问密码至少12个字符")
         secret(token, args.repo, "LOCATOR_PASSWORD", password)
@@ -252,7 +318,7 @@ def main():
 
     if args.command == "all":
         # Check names before uploading any workflow or enabling Pages.
-        require_required_secrets(token, args.repo, "all")
+        require_secrets("all")
         non_workflow = [path for path in UPLOAD if path != WORKFLOW_FILE]
         upload_paths(token, args.repo, branch, non_workflow)
         enable_pages(token, args.repo)
@@ -267,7 +333,7 @@ def main():
         return
 
     if args.command == "run":
-        require_required_secrets(token, args.repo, "run")
+        require_secrets("run")
         enable_pages(token, args.repo)
         dispatch(token, args.repo, branch)
         print("Pages workflow 模式已确认；已触发定位工作台 Actions。请在 GitHub Actions 页面确认结果。")
