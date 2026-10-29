@@ -77,12 +77,19 @@ jobs:
         if: ${{ !cancelled() && steps.upload_pages.outcome == 'success' }}
         uses: actions/deploy-pages@v4
       - name: 验证发布数据健康状态
+        id: health
         if: ${{ !cancelled() && steps.collect.outcome == 'success' && steps.deployment.outcome == 'success' }}
         run: python cloud/health_check.py
         env:
           LOCATOR_PASSWORD: ${{ secrets.LOCATOR_PASSWORD }}
       - name: 报告采集失败
-        if: ${{ always() && steps.collect.outcome == 'failure' }}
+        if: ${{ always() && (steps.collect.outcome == 'failure' || steps.health.outcome == 'failure') }}
         run: |
-          echo '::error::云端采集失败，已尝试发布现有静态看板；历史加密状态未更新。请检查采集日志及小米凭据。'
+          if [ "$COLLECT_OUTCOME" = 'failure' ]; then
+            echo '::error::云端采集失败，已尝试发布现有静态看板；历史加密状态未更新。请检查采集日志及小米凭据。'
+          else
+            echo '::error::发布数据健康检查失败：本轮可能仅保留并重新加密发布了历史位置，不代表获取到新位置。请检查健康检查及采集日志。'
+          fi
           exit 1
+        env:
+          COLLECT_OUTCOME: ${{ steps.collect.outcome }}
