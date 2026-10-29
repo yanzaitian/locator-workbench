@@ -385,7 +385,9 @@ def test_empty_mailbox_preserves_devices_and_encrypted_cursor():
     empty, conn, _ = run(mailbox({}), first)
     assert empty["mail"]["status"] == "ok" and empty["mail"]["messages"] == 0
     assert empty["mail"]["last_uid"] == 1
-    assert empty["devices"] == first["devices"]
+    expected = copy.deepcopy(first["devices"])
+    expected[0]["query_status"] = "未收到新邮件位置（保留历史位置）"
+    assert empty["devices"] == expected
     assert not body_calls(conn)
 
 
@@ -546,3 +548,101 @@ def test_invalid_target_history_is_preserved_with_safe_error_without_advancing(h
     assert result["history"] == before["history"] and state == before
     assert result["mail"]["error"] == "invalid_history" and result["mail"]["last_uid"] == 0
     assert result["devices"] == []
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_plan_mail_switch_overrides_legacy_flag_and_reports_safe_status(enabled):
+    state = {"devices": [], "plan": {"sources": {"mail": enabled}}}
+    config = dict(CONF, enabled=not enabled)
+    result, conn, factory = run(state=state, config=config)
+    assert result["sources"]["mail"] == {
+        "enabled": enabled, "configured": True, "status": "ok" if enabled else "disabled"}
+    if enabled:
+        assert result["devices"][0]["source"] == "mail"
+    else:
+        factory.assert_not_called()
+    assert SECRET not in json.dumps(result) and ACCOUNT not in json.dumps(result)
+
+
+def test_enabled_unconfigured_mail_has_explicit_source_status():
+    result, _, factory = run(state={"devices": [], "plan": {"sources": {"mail": True}}}, config={})
+    assert result["sources"]["mail"] == {
+        "enabled": True, "configured": False, "status": "not_configured"}
+    factory.assert_not_called()
+
+
+def test_disabled_mail_resets_stale_success_without_touching_history():
+    initial, _, _ = run()
+    original = copy.deepcopy(initial)
+    initial["plan"] = {"sources": {"mail": False}}
+    result, _, factory = run(state=initial)
+    assert result["devices"][0]["query_status"] == "邮件导入未启用（保留历史位置）"
+    assert result["devices"][0]["last_point"] == original["devices"][0]["last_point"]
+    assert result["history"] == original["history"]
+    factory.assert_not_called()
+
+
+@pytest.mark.parametrize("direct_enabled", [False, True])
+def test_main_real_mail_import_after_disabled_or_failed_direct(monkeypatch, tmp_path, direct_enabled):
+    from cloud import fetch, health_check
+    password = "synthetic-mail-pipeline-password"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(fetch.os, "environ", {
+        "LOCATOR_PASSWORD": password,
+        "XM_PLANS": json.dumps({"sources": {"direct": direct_enabled, "mail": True}}),
+        "XM_MAIL_CONFIG": json.dumps(dict(CONF, enabled=False)),
+        "XM_TOKEN": "synthetic-token", "XM_UID": "synthetic-uid",
+    })
+    monkeypatch.setattr(fetch.common, "now_utc", lambda: NOW)
+    monkeypatch.setattr(fetch, "load_active", lambda *a: (None, ""))
+    client = Mock()
+    client.device_list.return_value = []
+    factory = Mock(return_value=client)
+    monkeypatch.setattr(fetch.xiaomi_cloud, "Client", factory)
+    conn = mailbox()
+    monkeypatch.setattr(mail_import.imaplib, "IMAP4_SSL", Mock(return_value=conn))
+    fetch.main()
+    result = decrypt(json.loads((tmp_path / "site" / "state.enc.json").read_text()), password)
+    assert result["devices"][0]["device_id"] == "mail:phone"
+    assert result["devices"][0]["last_point"]["ts"] == POINT["ts"]
+    assert result["history"]["mail:phone"]["points"][0]["ts"] == POINT["ts"]
+    assert result["sources"]["mail"] == {"enabled": True, "configured": True, "status": "ok"}
+    assert SECRET not in json.dumps(result) and ACCOUNT not in json.dumps(result)
+    conn.select.assert_called_once_with("INBOX", readonly=True)
+    if direct_enabled:
+        with pytest.raises(health_check.HealthCheckError, match="STATE_HAS_ERROR"):
+            health_check.validate_state(result)
+    else:
+        factory.assert_not_called()
+        health_check.validate_state(result)
+
+
+@pytest.mark.parametrize("present", [(), ("XM_TOKEN",), ("XM_UID",)])
+def test_mail_still_imports_when_direct_credentials_are_missing(monkeypatch, tmp_path, present):
+    from cloud import fetch, health_check
+    password = "synthetic-mail-pipeline-password"
+    monkeypatch.chdir(tmp_path)
+    env = {
+        "LOCATOR_PASSWORD": password,
+        "XM_PLANS": json.dumps({"sources": {"direct": True, "mail": True}}),
+        "XM_MAIL_CONFIG": json.dumps(CONF),
+    }
+    env.update({key: "synthetic-value" for key in present})
+    monkeypatch.setattr(fetch.os, "environ", env)
+    monkeypatch.setattr(fetch.common, "now_utc", lambda: NOW)
+    monkeypatch.setattr(fetch, "load_active", lambda *a: (None, ""))
+    factory = Mock(side_effect=AssertionError("Missing credentials must not reach Xiaomi"))
+    monkeypatch.setattr(fetch.xiaomi_cloud, "Client", factory)
+    conn = mailbox()
+    monkeypatch.setattr(mail_import.imaplib, "IMAP4_SSL", Mock(return_value=conn))
+    fetch.main()
+    result = decrypt(json.loads((tmp_path / "site/state.enc.json").read_text()), password)
+    factory.assert_not_called()
+    assert result["devices"][0]["last_point"]["ts"] == POINT["ts"]
+    assert result["sources"]["direct"] == {
+        "enabled": True, "status": "error", "error": "missing_required_secrets"}
+    assert result["sources"]["mail"]["status"] == "ok"
+    assert result["error"]
+    with pytest.raises(health_check.HealthCheckError, match="STATE_HAS_ERROR"):
+        health_check.validate_state(result)
+    assert SECRET not in json.dumps(result) and ACCOUNT not in json.dumps(result)
