@@ -1,3 +1,5 @@
+import copy
+import datetime as dt
 import io
 import json
 from pathlib import Path
@@ -49,11 +51,15 @@ def test_validate_state_rejects_unhealthy_structure(state, code):
     assert exc_info.value.code == code
 
 
-def test_main_success_prints_fixed_message_and_allows_missing_location(tmp_path, capsys):
+def test_main_success_requires_recent_state_and_one_usable_location(tmp_path, capsys):
     target = tmp_path / "state.enc.json"
     write_encrypted_state(target, {
         "error": None,
-        "devices": [{"device_id": "synthetic-device", "query_status": "暂无新位置"}],
+        "updated": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "devices": [
+            {"device_id": "synthetic-device", "query_status": "暂无新位置"},
+            {"last_point": {"lat": 0, "lon": 0, "ts": "2020-01-01T00:00:00Z"}},
+        ],
     })
 
     assert health_check.main(target, PASSWORD) == 0
@@ -161,3 +167,188 @@ def test_script_entry_point_from_another_directory(tmp_path):
     assert result.returncode == 1
     assert result.stdout == "HEALTH_CHECK_FAILED:PASSWORD_MISSING\n"
     assert result.stderr == ""
+
+# Runtime checks use a fixed clock and synthetic locations only. Older points
+# remain valid by design: publication freshness is not device freshness.
+NOW = dt.datetime(2026, 10, 29, 12, tzinfo=dt.timezone.utc)
+
+
+def runtime_state():
+    return {
+        "updated": NOW.isoformat(),
+        "devices": [{"device_id": "synthetic-device", "last_point": {
+            "lat": 12.34, "lon": 56.78, "ts": NOW.isoformat(),
+        }}],
+    }
+
+
+@pytest.fixture(autouse=True)
+def block_network(monkeypatch):
+    import socket
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Health-check tests must not access the network")
+
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(socket.socket, "connect_ex", forbidden)
+
+
+@pytest.mark.parametrize("value", [
+    None, "", "private invalid timestamp", True, 1793275200, [], {},
+    "2026-10-29", "2026-10-29T12:00:00", "2026-02-30T12:00:00Z",
+    "1969-12-31T23:59:59Z", "0001-01-01T00:00:00+14:00",
+])
+def test_runtime_rejects_invalid_updated(value):
+    state = runtime_state()
+    state["updated"] = value
+    with pytest.raises(health_check.HealthCheckError) as exc:
+        health_check.validate_state(state, runtime=True, now=NOW)
+    assert exc.value.code == "STATE_UPDATED_INVALID"
+
+
+@pytest.mark.parametrize("offset,code", [
+    (-dt.timedelta(minutes=30), None),
+    (-dt.timedelta(minutes=30, microseconds=1), "STATE_STALE"),
+    (dt.timedelta(minutes=5), None),
+    (dt.timedelta(minutes=5, microseconds=1), "STATE_UPDATED_IN_FUTURE"),
+    (-dt.timedelta(days=1), "STATE_STALE"),
+    (dt.timedelta(days=1), "STATE_UPDATED_IN_FUTURE"),
+])
+def test_runtime_updated_age_boundaries(offset, code):
+    state = runtime_state()
+    state["updated"] = (NOW + offset).isoformat()
+    if code is None:
+        health_check.validate_state(state, runtime=True, now=NOW)
+    else:
+        with pytest.raises(health_check.HealthCheckError) as exc:
+            health_check.validate_state(state, runtime=True, now=NOW)
+        assert exc.value.code == code
+
+
+@pytest.mark.parametrize("point", [
+    None, {}, [], "private malformed point",
+    {"lat": 12, "lon": 56},
+    {"lat": 12, "lon": 56, "ts": None},
+    {"lat": 12, "lon": 56, "ts": "invalid private time"},
+    {"lat": 12, "lon": 56, "ts": "2026-10-29T12:00:00"},
+    {"lat": 12, "lon": 56, "ts": "1969-12-31T23:59:59Z"},
+    {"lat": 12, "lon": 56, "ts": "2026-10-29T12:05:00.000001Z"},
+    *[{"lat": lat, "lon": lon, "ts": NOW.isoformat()} for lat, lon in [
+        (None, 0), (0, None), (True, 0), (0, False), ("12", 56),
+        (12, "56"), (float("nan"), 0), (0, float("nan")),
+        (float("inf"), 0), (0, -float("inf")), (91, 0), (0, 181),
+        (-91, 0), (0, -181), ([], 0), (0, {}),
+    ]],
+])
+def test_runtime_rejects_no_usable_location(point):
+    state = runtime_state()
+    state["devices"] = [{"last_point": point}, {"query_status": "查询成功"}]
+    with pytest.raises(health_check.HealthCheckError) as exc:
+        health_check.validate_state(state, runtime=True, now=NOW)
+    assert exc.value.code == "USABLE_LOCATION_MISSING"
+
+
+def test_runtime_rejects_history_without_a_current_device_point():
+    state = runtime_state()
+    state["history"] = {"synthetic-device": {"points": [state["devices"][0].pop("last_point")]}}
+    with pytest.raises(health_check.HealthCheckError) as exc:
+        health_check.validate_state(state, runtime=True, now=NOW)
+    assert exc.value.code == "USABLE_LOCATION_MISSING"
+
+
+@pytest.mark.parametrize("lat,lon", [(0, 0), (-90, -180), (90, 180)])
+def test_runtime_accepts_coordinate_boundaries_and_future_tolerance(lat, lon):
+    state = runtime_state()
+    state["devices"][0]["last_point"] = {
+        "lat": lat, "lon": lon, "ts": (NOW + dt.timedelta(minutes=5)).isoformat(),
+    }
+    health_check.validate_state(state, runtime=True, now=NOW)
+
+
+def test_runtime_normalizes_timezones_without_mutating_state():
+    state = runtime_state()
+    state["updated"] = "2026-10-29T20:00:00+08:00"
+    state["devices"][0]["last_point"]["ts"] = "2026-10-29T05:00:00-07:00"
+    before = copy.deepcopy(state)
+    health_check.validate_state(state, runtime=True,
+                                now=NOW.astimezone(dt.timezone(dt.timedelta(hours=-7))))
+    assert state == before
+
+
+@pytest.mark.parametrize("row", [
+    {"query_status": "等待计划时段或间隔（显示上次位置）"},
+    {"settings": {"enabled": False}, "query_status": "直接查询已停用，显示历史位置"},
+    {"device_id": "mail:synthetic", "source": "mail", "query_status": "未收到新邮件位置（保留历史位置）"},
+    {"query_status": "暂无新位置，保留上次位置"},
+])
+def test_runtime_allows_old_points_for_standby_disabled_and_mail(row):
+    state = runtime_state()
+    state["devices"][0].update(row)
+    state["devices"][0]["last_point"]["ts"] = "2020-01-01T00:00:00Z"
+    state["devices"].insert(0, {"last_point": {"lat": "invalid"}})
+    state["devices"].append({"last_point": None})
+    health_check.validate_state(state, runtime=True, now=NOW)
+
+
+@pytest.mark.parametrize("code", ["STATE_HAS_ERROR", "DEVICE_QUERY_FAILED"])
+def test_runtime_preserves_failure_flags_even_with_good_location(code):
+    state = runtime_state()
+    if code == "STATE_HAS_ERROR":
+        state["error"] = "private synthetic error"
+    else:
+        state["devices"].append({"query_status": "request FAILED: private detail"})
+    # Error flags must also take priority over stale or malformed timestamps.
+    state["updated"] = "invalid"
+    with pytest.raises(health_check.HealthCheckError) as exc:
+        health_check.validate_state(state, runtime=True, now=NOW)
+    assert exc.value.code == code
+
+
+@pytest.mark.parametrize("updated,point,code", [
+    (None, None, "STATE_UPDATED_INVALID"),
+    ((NOW - dt.timedelta(hours=1)).isoformat(), None, "STATE_STALE"),
+    ((NOW + dt.timedelta(hours=1)).isoformat(), None, "STATE_UPDATED_IN_FUTURE"),
+    (NOW.isoformat(), None, "USABLE_LOCATION_MISSING"),
+])
+def test_check_state_enforces_runtime_checks_on_encrypted_file(tmp_path, updated, point, code):
+    state = {"updated": updated, "devices": [{"last_point": point}]}
+    # Existing callers retain their structure-only behavior, but CLI cannot opt out.
+    health_check.validate_state(state)
+    target = tmp_path / "synthetic.enc.json"
+    write_encrypted_state(target, state)
+    with pytest.raises(health_check.HealthCheckError) as exc:
+        health_check.check_state(target, PASSWORD, now=NOW)
+    assert exc.value.code == code
+
+
+def test_check_state_accepts_encrypted_recent_state_with_historical_point(tmp_path):
+    state = runtime_state()
+    state["devices"][0]["last_point"]["ts"] = "2020-01-01T00:00:00Z"
+    target = tmp_path / "synthetic.enc.json"
+    write_encrypted_state(target, state)
+    health_check.check_state(target, PASSWORD, now=NOW)
+
+
+@pytest.mark.parametrize("kind,code", [
+    ("missing_updated", "STATE_UPDATED_INVALID"),
+    ("stale", "STATE_STALE"),
+    ("future", "STATE_UPDATED_IN_FUTURE"),
+    ("missing_point", "USABLE_LOCATION_MISSING"),
+])
+def test_main_runtime_failure_prints_only_safe_code(tmp_path, kind, code):
+    state = runtime_state()
+    state["updated"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    if kind == "missing_updated":
+        state.pop("updated")
+    elif kind == "stale":
+        state["updated"] = "2000-01-01T00:00:00Z"
+    elif kind == "future":
+        state["updated"] = "9998-01-01T00:00:00Z"
+    else:
+        state["devices"][0]["last_point"]["ts"] = "private invalid point time"
+    target = tmp_path / "synthetic.enc.json"
+    write_encrypted_state(target, state)
+    output = io.StringIO()
+    assert health_check.main(target, PASSWORD, stdout=output) == 1
+    assert output.getvalue() == f"{health_check.ERROR_PREFIX}{code}\n"
