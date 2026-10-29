@@ -46,6 +46,13 @@ def collect(client, previous=None, plans=None, now=None):
     if not sources["direct"]:
         return state
     direct = state["sources"]["direct"]
+    if client is None:
+        direct.update(status="error", error="missing_required_secrets")
+        state["error"] = "小米凭据缺失，显示历史数据；继续尝试邮箱来源"
+        for row in rows.values():
+            if row.get("source") != "mail" and not row["device_id"].startswith("mail:"):
+                row["query_status"] = "小米凭据缺失，显示历史数据"
+        return state
     direct["status"] = "ok"
     try:
         listed = client.device_list()
@@ -177,9 +184,10 @@ def main():
     client = None
     if sources["direct"]:
         missing = [name for name in ("XM_TOKEN", "XM_UID") if not os.environ.get(name)]
-        if missing:
+        if missing and not sources["mail"]:
             raise CollectorError("missing_required_secrets:" + ",".join(missing))
-        client = xiaomi_cloud.Client(os.environ["XM_TOKEN"], os.environ["XM_UID"])
+        if not missing:
+            client = xiaomi_cloud.Client(os.environ["XM_TOKEN"], os.environ["XM_UID"])
     result = collect(client, previous, plans)
     result["plan_request_id"] = revision
     result = import_mail(result, mail_config)
