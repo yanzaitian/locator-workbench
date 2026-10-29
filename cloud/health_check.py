@@ -13,6 +13,7 @@ DEFAULT_STATE_PATH = PROJECT_ROOT / "site" / "state.enc.json"
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from cloud.crypto_state import decrypt  # noqa: E402
+import schedule  # noqa: E402
 
 SUCCESS_MESSAGE = "健康检查成功"
 ERROR_PREFIX = "HEALTH_CHECK_FAILED:"
@@ -81,14 +82,63 @@ def _usable_point(point: object, now: dt.datetime) -> bool:
     return stamp is not None and stamp <= now + MAX_FUTURE_SKEW
 
 
+def _validate_device_freshness(state: dict, now: dt.datetime) -> None:
+    """Reject overdue direct locations only when an explicit cloud plan applies.
+
+    Preserve legacy snapshots without a plan and imported mail history. Give a
+    newly opened collection window thirty minutes to obtain its first point.
+    A current query/publication timestamp never substitutes for a point's time.
+    """
+    if "plan" not in state:
+        return
+    plans = state["plan"]
+    try:
+        schedule.validate_cloud_plans(plans)
+        sources = schedule.cloud_sources(plans)
+    except (ValueError, TypeError, OverflowError):
+        raise HealthCheckError("STATE_PLAN_INVALID") from None
+    if not sources["direct"]:
+        return
+    global_plan = plans.get("schedule") or {
+        "enabled": True, "skip_holidays": False,
+        "default": {"enabled": True, "start": "00:00", "end": "00:00",
+                    "interval_minutes": 10},
+    }
+    holidays = plans.get("holidays") or {}
+    for device in state["devices"]:
+        did = device.get("device_id")
+        if device.get("source") == "mail" or (isinstance(did, str) and did.startswith("mail:")):
+            continue
+        if not isinstance(did, str) or not did:
+            raise HealthCheckError("DEVICE_PLAN_INVALID")
+        policy = dict(plans.get("devices", {}).get(did, {}), device_id=did)
+        # Plans use minute-resolution boundaries. Check the entire grace window,
+        # including midnight/holiday transitions, rather than just its endpoints.
+        if not all(schedule.device_due(policy, global_plan, holidays, None,
+                                       now - dt.timedelta(minutes=minute), minimum=10)
+                   for minute in range(31)):
+            continue
+        point = device.get("last_point")
+        if not _usable_point(point, now):
+            raise HealthCheckError("DEVICE_LOCATION_MISSING")
+        stamp = _timestamp(point["ts"])
+        # Use the current effective interval, including independent device plans.
+        # Accept the exact interval+grace boundary; reject only once overdue.
+        tolerated = stamp + MAX_STATE_AGE + dt.timedelta(microseconds=1)
+        if schedule.device_due(policy, global_plan, holidays, tolerated.isoformat(),
+                               now, minimum=10):
+            raise HealthCheckError("DEVICE_LOCATION_STALE")
+
+
 def validate_state(state: object, *, runtime: bool = False,
                    now: dt.datetime | None = None) -> None:
     """Check error flags; optionally require recent state and a usable location.
 
     The default preserves existing structure-only callers. Runtime validation
-    bounds the collector's ``updated`` timestamp, not every device's point age:
-    schedules, disabled devices and mail imports may legitimately retain history.
-    Passing this check therefore does not establish real-time device locations.
+    bounds the collector's ``updated`` timestamp and active direct-device point
+    ages when an explicit plan exists. Disabled/out-of-window devices, legacy
+    snapshots and mail imports may retain history. Passing does not prove that
+    every device is online or that imported mail is a live location.
     ``now`` may be injected as an aware datetime for offline tests.
     """
     if not isinstance(state, dict):
@@ -124,11 +174,12 @@ def validate_state(state: object, *, runtime: bool = False,
             raise HealthCheckError("STATE_STALE")
         if not any(_usable_point(device.get("last_point"), now) for device in devices):
             raise HealthCheckError("USABLE_LOCATION_MISSING")
+        _validate_device_freshness(state, now)
 
 
 def check_state(path: str | Path = DEFAULT_STATE_PATH, password: str | None = None, *,
                 now: dt.datetime | None = None) -> None:
-    """Require recent collector state and a usable (possibly historical) point."""
+    """Require recent state and usable points consistent with active direct plans."""
     validate_state(load_state(path, password), runtime=True, now=now)
 
 
