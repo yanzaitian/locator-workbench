@@ -1,0 +1,663 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#070c18">
+<meta name="csrf-token" content="__CSRF_TOKEN__">
+<link rel="icon" href="data:,">
+<title>定位工作台</title>
+<style>
+  :root{
+    --bg:#070c18; --panel:#111a2e; --panel2:#0d1526; --line:#1e2b45;
+    --ink:#e8eefb; --sub:#8a99b5; --acc:#6d8cff; --acc2:#22d3ee;
+    --ok:#34d399; --warn:#fbbf24; --bad:#f87171; --radius:18px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{margin:0;background:
+      radial-gradient(900px 500px at 85% -10%,rgba(109,140,255,.18),transparent 60%),
+      radial-gradient(700px 400px at -10% 110%,rgba(34,211,238,.12),transparent 55%),
+      var(--bg);
+    color:var(--ink);font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  .app{display:flex;min-height:100vh}
+  /* 侧边栏 */
+  .side{width:232px;flex:0 0 232px;border-right:1px solid var(--line);padding:22px 16px;
+        display:flex;flex-direction:column;gap:18px;position:sticky;top:0;height:100vh}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:800;font-size:18px;letter-spacing:.5px}
+  .logo .mark{width:34px;height:34px;border-radius:11px;background:linear-gradient(135deg,var(--acc),var(--acc2));
+              display:grid;place-items:center;color:#06101f;font-weight:900;box-shadow:0 8px 24px rgba(109,140,255,.35)}
+  .logo small{display:block;font-size:10px;color:var(--sub);font-weight:500;letter-spacing:2px}
+  nav{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+  nav button{border:0;background:transparent;color:var(--sub);text-align:left;padding:11px 12px;border-radius:12px;
+             font-size:14px;cursor:pointer;display:flex;align-items:center;gap:10px;transition:.15s}
+  nav button svg{width:17px;height:17px;opacity:.8}
+  nav button:hover{background:rgba(255,255,255,.04);color:var(--ink)}
+  nav button.on{background:linear-gradient(90deg,rgba(109,140,255,.22),rgba(34,211,238,.08));color:var(--ink);
+                box-shadow:inset 0 0 0 1px rgba(109,140,255,.35)}
+  .side-foot{margin-top:auto;font-size:12px;color:var(--sub);border-top:1px solid var(--line);padding-top:14px}
+  .side-foot b{display:block;color:var(--ink);font-size:13px;margin-bottom:2px}
+
+  main{flex:1;min-width:0;padding:26px 30px 60px;max-width:1200px}
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:22px}
+  .topbar h1{font-size:23px;margin:0;letter-spacing:.3px}
+  .topbar .sub{color:var(--sub);font-size:12px;margin-top:3px}
+  .chip{display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border-radius:999px;font-size:12px;font-weight:700;
+        border:1px solid var(--line);background:var(--panel)}
+  .chip i{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--sub);font-style:normal}
+  .chip.ok{color:var(--ok);border-color:rgba(52,211,153,.35)} .chip.ok i{background:var(--ok);box-shadow:0 0 10px var(--ok)}
+  .chip.warn{color:var(--warn);border-color:rgba(251,191,36,.35)} .chip.warn i{background:var(--warn)}
+  .chip.bad{color:var(--bad);border-color:rgba(248,113,113,.35)} .chip.bad i{background:var(--bad)}
+
+  .page{display:none} .page.on{display:block}
+  .card{background:linear-gradient(180deg,rgba(255,255,255,.03),transparent 60%),var(--panel);
+        border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:16px}
+  .card h2{font-size:13px;letter-spacing:1px;color:var(--sub);margin:0 0 14px;font-weight:700;text-transform:uppercase}
+  .grid{display:grid;gap:16px}
+  .g3{grid-template-columns:repeat(3,1fr)} .g2{grid-template-columns:repeat(2,1fr)}
+  @media(max-width:900px){.g3,.g2{grid-template-columns:1fr}}
+
+  /* 大卡 */
+  .hero{position:relative;overflow:hidden;background:linear-gradient(135deg,#131f3a,#0d1830 55%,#0b1428);
+        border:1px solid rgba(109,140,255,.28)}
+  .hero:after{content:"";position:absolute;width:320px;height:320px;border-radius:50%;right:-110px;top:-140px;
+              background:radial-gradient(circle,rgba(109,140,255,.35),transparent 65%)}
+  .hero .label{font-size:12px;color:var(--sub);letter-spacing:1px}
+  .hero .big{font-size:30px;font-weight:800;margin:2px 0 4px;letter-spacing:.5px}
+  .hero .meta{display:flex;flex-wrap:wrap;gap:26px;margin-top:16px}
+  .hero .meta div{font-size:12px;color:var(--sub)} .hero .meta b{display:block;color:var(--ink);font-size:15px;margin-top:2px}
+  .hero .acts{display:flex;gap:10px;margin-top:20px;flex-wrap:wrap;position:relative;z-index:1}
+
+  .btn{border:1px solid var(--line);background:#16213a;color:var(--ink);border-radius:12px;padding:10px 16px;font-size:13px;
+       cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:.15s}
+  .btn:hover{border-color:#31456e;background:#1a2744}
+  .btn.primary{background:linear-gradient(135deg,var(--acc),#8b5cf6);border:0;color:#fff;font-weight:700;
+               box-shadow:0 10px 26px rgba(109,140,255,.35)}
+  .btn.primary:hover{filter:brightness(1.08)}
+  .btn.ghost{background:rgba(255,255,255,.04)}
+  .btn:disabled{opacity:.5;cursor:default}
+  .btn.sm{padding:6px 11px;font-size:12px;border-radius:10px}
+
+  .metric{display:flex;flex-direction:column;gap:2px}
+  .metric .n{font-size:28px;font-weight:800} .metric .l{font-size:12px;color:var(--sub)}
+
+  .g4{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:980px){.g4{grid-template-columns:repeat(2,1fr)}}
+  .tile{background:var(--panel2);border:1px solid var(--line);border-radius:16px;padding:16px}
+  .tile .l{font-size:12px;color:var(--sub)}
+  .tile .v{font-size:26px;font-weight:800;margin-top:4px}
+  .tile .v small{font-size:12px;font-weight:600;color:var(--sub);margin-left:5px}
+  /* 设备卡 */
+  .devgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
+  .dev{background:var(--panel2);border:1px solid var(--line);border-radius:16px;padding:16px;position:relative}
+  .dev .top{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .dev .ico{width:38px;height:38px;border-radius:12px;background:rgba(109,140,255,.15);display:grid;place-items:center;font-size:18px}
+  .dev .nm{font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dev .tm{font-size:11px;color:var(--sub)}
+  .dev .row2{display:flex;justify-content:space-between;font-size:12px;color:var(--sub);margin:8px 0}
+  .dev .row2 b{color:var(--ink);font-weight:600}
+  .dev .acts{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .badge{font-size:10px;padding:2px 8px;border-radius:999px;background:rgba(34,211,238,.12);color:var(--acc2);font-weight:700}
+  .badge.off{background:rgba(248,113,113,.12);color:var(--bad)}
+
+  .status{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;margin-left:auto}
+  .status.on2{background:rgba(52,211,153,.14);color:#34d399}
+  .status.offline{background:rgba(248,113,113,.12);color:#f87171}
+  .status.off{background:rgba(138,153,181,.15);color:#8a99b5}
+  .dev.off{opacity:.72}
+  .kv2{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--sub);margin:8px 0 4px}
+  .kv2 b{color:var(--ink);font-weight:600}
+  .addr{font-size:12px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:8px}
+  /* 表格 */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line)}
+  th{font-size:11px;color:var(--sub);letter-spacing:.5px;font-weight:700}
+  tr:last-child td{border-bottom:0}
+
+  /* 表单 */
+  .field{display:grid;grid-template-columns:130px 1fr;gap:12px;align-items:center;margin:10px 0;font-size:13px}
+  .field>span{color:var(--sub)}
+  input,select,textarea{background:#0b1324;border:1px solid var(--line);color:var(--ink);border-radius:11px;
+                        padding:10px 12px;font:inherit;font-size:13px;width:100%}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc);box-shadow:0 0 0 3px rgba(109,140,255,.15)}
+  textarea{min-height:90px;font-size:12px;line-height:1.7;resize:vertical}
+  .hint{font-size:12px;color:var(--sub);line-height:1.8;margin-top:8px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .sep{height:1px;background:var(--line);margin:16px 0}
+  /* 计划 */
+  .planrow{display:grid;grid-template-columns:90px 70px 1fr 1fr 100px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px dashed var(--line)}
+  @media(max-width:760px){.planrow{grid-template-columns:76px 52px 1fr 1fr}.planrow select{grid-column:2/5}}
+  .planrow:last-child{border-bottom:0}
+  .planrow .nm{font-size:13px;font-weight:600}
+  .device-plan{margin-top:10px;padding-top:8px;border-top:1px dashed var(--line)}
+  .device-plan summary{cursor:pointer;color:var(--acc2);font-size:12px;margin-bottom:8px}
+  .planrow.dim input,.planrow.dim select{opacity:.45}
+  .switch{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--sub);cursor:pointer}
+  .switch input{width:15px;height:15px;accent-color:var(--acc)}
+  /* 月报 */
+  pre.rep{background:#050a14;border:1px solid var(--line);border-radius:14px;padding:18px;color:#cfe0ff;
+          font-size:13px;line-height:1.85;white-space:pre-wrap;word-break:break-word;max-height:58vh;overflow:auto;margin:14px 0 0}
+  .replist{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
+  .repcard{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:12px;cursor:pointer;transition:.15s}
+  .repcard:hover{border-color:var(--acc);transform:translateY(-1px)}
+  .repcard b{font-size:15px} .repcard span{display:block;font-size:11px;color:var(--sub);margin-top:3px}
+  /* 二维码 */
+  .qrbox{text-align:center;padding:12px;border:1px dashed var(--line);border-radius:14px;margin-top:12px;display:none}
+  .qrbox img{width:180px;height:180px;border-radius:12px;background:#fff;padding:6px}
+  /* 移动端 */
+  @media(max-width:820px){
+    body{font-size:15px}
+    nav button{font-size:14px;padding:9px 12px}
+    .topbar h1{font-size:21px}
+    .hero .big{font-size:26px}
+    .dev .nm{font-size:15px}
+    .kv2{font-size:13px}
+    .btn{padding:11px 16px;font-size:14px}
+    .btn.sm{padding:8px 12px;font-size:13px}
+    .field{grid-template-columns:1fr;gap:4px}
+    .planrow{grid-template-columns:70px 46px 1fr 1fr}
+    .planrow input,.planrow select{padding:10px 8px;font-size:14px}
+    th,td{padding:11px 6px;font-size:14px}
+    .hint{font-size:13px}
+  }
+  @media(max-width:820px){
+    .app{flex-direction:column}
+    .side{width:100%;flex:none;height:auto;position:sticky;top:0;z-index:20;border-right:0;border-bottom:1px solid var(--line);
+          padding:12px 14px;gap:10px;background:rgba(7,12,24,.92);backdrop-filter:blur(10px)}
+    .logo{font-size:16px} .logo small{display:none}
+    nav{flex-direction:row;overflow-x:auto;gap:6px;margin-top:0;scrollbar-width:none}
+    nav::-webkit-scrollbar{display:none}
+    nav button{padding:8px 12px;white-space:nowrap;font-size:13px}
+    .side-foot{display:none}
+    main{padding:16px 14px 80px}
+    .topbar h1{font-size:19px}
+    .planrow .nm{font-size:12px}
+  }
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(16px);background:#0c1730;color:#fff;
+         border:1px solid var(--line);padding:11px 18px;border-radius:999px;font-size:13px;opacity:0;transition:.25s;
+         pointer-events:none;z-index:99;box-shadow:0 14px 40px rgba(0,0,0,.5);max-width:88vw;text-align:center}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .muted{color:var(--sub)}
+  a{color:var(--acc2);text-decoration:none}
+  .settings-intro{margin-bottom:24px}.settings-intro h2{font-size:26px;margin:0}.settings-intro p{color:var(--sub)}
+  .section-kicker{font-size:12px;color:var(--acc2);margin-bottom:8px;letter-spacing:1px}
+  .account-card{border-color:#415687;background:linear-gradient(130deg,#182746,var(--panel))}
+  .account-status{padding:12px 16px;border-radius:12px;background:var(--panel2);line-height:1.7}
+  .settings-detail{margin-top:16px;border-top:1px solid var(--line);padding-top:14px}.settings-detail summary{cursor:pointer;min-height:32px}
+  .account-note{padding:12px;border-left:3px solid var(--acc);background:var(--panel2)}
+  .settings-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.settings-columns .card{margin-bottom:0}
+  .card,.field>*{min-width:0}.hint,.account-status{overflow-wrap:anywhere}a{color:var(--acc2)}button:focus-visible,summary:focus-visible{outline:2px solid var(--acc2);outline-offset:4px}
+  @media(max-width:1100px){.settings-columns{grid-template-columns:1fr}}
+  @media(max-width:420px){.planrow{grid-template-columns:64px 40px minmax(0,1fr) minmax(0,1fr);gap:4px}.devgrid{grid-template-columns:minmax(0,1fr)}.settings-intro h2{font-size:22px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="logo"><div class="mark">定</div><div>定位工作台<small>LOCATOR</small></div></div>
+    <nav id="nav">
+      <button data-page="dash" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>仪表盘</button>
+      <button data-page="devices"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></svg>设备</button>
+      <button data-page="plan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>计划</button>
+      <button data-page="reports"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h7"/></svg>月报</button>
+      <button data-page="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.3 2.6a7 7 0 0 0-1.7 1l-2.4-1-2 3.4L5 11a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.6h5l.3-2.6a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6a7 7 0 0 0 .1-1z"/></svg>设置</button>
+    </nav>
+    <div class="side-foot">
+      <b id="sideStatus">正在连接…</b>
+      <span id="sideTime"></span>
+    </div>
+  </aside>
+
+  <main>
+    <div class="topbar">
+      <div><h1 id="pageTitle">仪表盘</h1><div class="sub" id="pageSub">—</div></div>
+      <div class="row"><div class="chip" id="pill"><i></i>连接中</div><button class="btn sm" id="btnLogout">退出登录</button></div>
+    </div>
+
+    <!-- 仪表盘 -->
+    <section class="page on" id="page-dash">
+      <div class="grid g4" id="summaryStrip"></div>
+
+      <div class="card">
+        <div class="row" style="justify-content:space-between;margin-bottom:14px">
+          <h2 style="margin:0">全部设备</h2>
+          <div class="row"><button class="btn sm" id="btnRefreshAll">刷新全部定位</button></div>
+        </div>
+        <div class="devgrid" id="dashDevGrid"></div>
+      </div>
+
+      <div class="grid g3" style="display:none">
+        <div class="card"><h2>今日计划</h2><div class="metric"><div class="n" id="planNow">—</div><div class="l" id="planNext">—</div></div><div class="hint" id="planReason"></div></div>
+        <div class="card"><h2>数据量</h2><div class="row" style="justify-content:space-between">
+          <div class="metric"><div class="n" id="cToday">0</div><div class="l">今天</div></div>
+          <div class="metric"><div class="n" id="cWeek">0</div><div class="l">近7天</div></div>
+          <div class="metric"><div class="n" id="cTotal">0</div><div class="l">累计</div></div></div></div>
+        <div class="card"><h2>设备在线</h2><div class="metric"><div class="n" id="devOn">0</div><div class="l">台已启用</div></div><div class="hint" id="devHint"></div></div>
+      </div>
+
+      <div class="card">
+        <h2>最近 7 天</h2>
+        <table id="days"><thead><tr><th>日期</th><th>点数</th><th>首次</th><th>末次</th><th>距离</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <!-- 设备 -->
+    <section class="page" id="page-devices">
+      <div class="card"><div class="section-kicker">设备管理</div><h2>我的小米设备</h2><p class="hint">登录、重新授权和连接状态统一在设置中管理。下方查看已加入的设备。</p><button class="btn primary" id="btnGoXmAccount">前往小米账号与授权</button></div>
+      <div class="card">
+        <h2>我的设备</h2>
+        <div class="devgrid" id="devGrid"><div class="muted">还没有设备，先登录小米账号</div></div>
+      </div>
+    </section>
+
+    <!-- 计划 -->
+    <section class="page" id="page-plan">
+      <div class="card">
+        <h2>定位时间</h2>
+        <div class="row" style="margin-bottom:6px">
+          <label class="switch"><input type="checkbox" id="schedEnabled"> 启用定时定位</label>
+          <label class="switch"><input type="checkbox" id="skipHolidays"> 跳过法定节假日</label>
+          <button class="btn sm" id="btnRecommend">一键推荐</button>
+        </div>
+        <div class="planrow"><div class="nm">默认</div><div class="muted" style="font-size:11px">工作日</div><input type="time" id="default-start"><input type="time" id="default-end"><select id="default-intv"></select></div>
+        <div id="weekdayRows"></div>
+        <div class="sep"></div>
+        <div class="planrow"><div class="nm">调休上班</div><div class="muted" style="font-size:11px">周六日</div><input type="time" id="holiday-start"><input type="time" id="holiday-end"><select id="holiday-intv"></select></div>
+        <div class="hint">时间支持跨天（22:00–06:00）。保存后会尝试邮件下发到手机。</div>
+        <div class="row" style="margin-top:14px"><button class="btn primary" id="btnSavePlan">保存计划</button><span class="muted" id="planUpdated"></span></div>
+      </div>
+      <div class="card">
+        <h2>节假日日历</h2>
+        <div class="hint" style="margin-top:0">法定节假日（每行一个日期）</div>
+        <textarea id="holidaysText"></textarea>
+        <div class="hint">调休上班日</div>
+        <textarea id="workdaysText"></textarea>
+      </div>
+    </section>
+
+    <!-- 月报 -->
+    <section class="page" id="page-reports">
+      <div class="card">
+        <h2>生成月报</h2>
+        <div class="row">
+          <input type="month" id="reportMonth" style="max-width:190px">
+          <button class="btn primary" id="btnGenReport">用 DeepSeek 生成</button>
+          <button class="btn" id="btnExport">导出 Markdown</button>
+        </div>
+        <div class="hint">每月 1 号开机后自动补生成上月；历史版本永久保存。</div>
+        <div class="replist" id="reportList" style="margin-top:14px"></div>
+      </div>
+      <div class="card"><h2>内容</h2><pre class="rep" id="reportContent">还没有选择月报。</pre></div>
+    </section>
+
+    <!-- 设置 -->
+    <section class="page" id="page-settings">
+      <div class="settings-intro"><h2>设置与连接</h2><p>先连接小米账号，再按需要设置通知、月报和访问安全。</p><div class="row"><button class="btn sm" data-settings-target="xiaomi-account">小米账号</button><button class="btn sm" data-settings-target="settings-services">通知与月报</button><button class="btn sm" data-settings-target="settings-security">安全与访问</button></div></div>
+      <div class="card account-card" id="xiaomi-account">
+        <div class="section-kicker">01 · 账号与设备连接</div><h2>小米账号与授权</h2><p class="account-status" id="xmAccountStatus" role="status">正在读取本地授权状态…</p>
+        <div class="hint" style="margin-top:0">扫码最省事：用手机「设置 → 小米账号 → 扫一扫」。请在手机上确认授权，成功后设备自动加入。</div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn primary" id="btnXmQr">扫码登录</button>
+          <button class="btn" id="btnXmSync">刷新全部定位</button>
+          <button class="btn" id="btnXmCheck" type="button">检查授权是否有效</button>
+        </div>
+        <details class="settings-detail"><summary>使用账号密码登录</summary><div class="field"><span>账号</span><input id="xmUser" placeholder="手机号 / 邮箱（也可密码登录）"></div>
+        <div class="field"><span>密码</span><input id="xmPass" type="password" placeholder="只在本地使用，不保存"></div>
+        <div class="row"><button class="btn" id="btnXmLogin">密码登录</button></div></details>
+        <div class="qrbox" id="xmQrBox"><img id="xmQrImg" alt="二维码"><div class="hint" id="xmQrTip">用小米手机扫码</div></div>
+        <details class="settings-detail"><summary class="muted" style="cursor:pointer;font-size:12px">备用：Cookie 登录</summary>
+          <textarea id="xmCookie" placeholder="userId=...; serviceToken=..." style="margin-top:8px"></textarea>
+          <div class="row" style="margin-top:8px"><button class="btn sm" id="btnXmCookie">用 Cookie 登录</button></div>
+        </details>
+              <div class="hint account-note">本机授权与云端授权分别保存。本地扫码后，仍需更新 GitHub Secrets 中的 XM_TOKEN、XM_UID，云端才能继续定位。不要在聊天中发送凭据。</div>
+      </div>
+      <div class="card" id="location-sources">
+        <div class="section-kicker">位置获取方式</div><h2>选择采集来源</h2>
+        <div class="field"><span>方式一</span><label><input type="checkbox" id="sourceDirect"> 定时直接查询小米位置</label></div>
+        <p class="hint">由程序按设备计划自动请求小米接口，无需 AI 逐次点击。本地采集需要电脑开机；关机采集须在云端工作台的采集计划中设置。</p>
+        <div class="field"><span>方式二</span><label><input type="checkbox" id="sourceMail"> 邮箱导入位置</label></div>
+        <p class="hint">只读取设备已经发来的定位邮件或轨迹附件；邮箱本身不会发起设备定位。可同时启用两种方式。</p>
+        <p class="hint" id="sourceStatus" role="status"></p>
+        <p class="hint">以下开关只保存到本机。云端请打开<a href="https://yanzaitian.github.io/locator-workbench/" target="_blank" rel="noopener">云端工作台</a>，解锁后进入“采集计划”，单独保存来源与计划。</p>
+        <button class="btn primary" id="btnSaveSources" type="button">保存获取方式</button>
+      </div>
+      <div class="settings-columns" id="settings-services">
+
+      <div class="card">
+        <div class="section-kicker">02 · 通知服务</div><h2>邮箱通道</h2><p class="hint">用于邮件接收位置和下发计划，按需要配置。</p>
+        <div class="field"><span>IMAP 服务器</span><input id="imapHost" placeholder="imap.163.com"></div>
+        <div class="field"><span>SMTP 服务器</span><input id="smtpHost" placeholder="smtp.163.com"></div>
+        <div class="field"><span>账号</span><input id="imapUser" placeholder="17304872158@163.com"></div>
+        <div class="field"><span>授权码</span><input id="imapPass" type="password" placeholder="留空不修改"></div>
+        <div class="field"><span>主题关键词</span><input id="imapSubject" placeholder="GPS"></div>
+        <div class="hint">163 邮箱：设置 → POP3/SMTP/IMAP 开启，短信验证后生成客户端授权码。</div>
+      </div>
+      <div class="card">
+        <div class="section-kicker">03 · 分析服务</div><h2>DeepSeek 月报</h2><p class="hint">配置后可在月报页生成分析。</p>
+        <div class="field"><span>API Key</span><input id="dsKey" type="password" placeholder="留空不修改"></div>
+        <div class="field"><span>模型</span><input id="dsModel"></div>
+      </div>
+      </div><div class="card">
+        <h2>定位提醒与自动月报</h2>
+        <div class="field"><span>失联阈值</span><input id="alertHours" type="number" step="0.5"></div>
+        <div class="field"><span>自动月报</span><label class="switch"><input type="checkbox" id="autoReport"> 开机自动补齐缺失月份</label></div>
+        <div class="row" style="margin-top:12px"><button class="btn primary" id="btnSaveSettings">保存设置</button></div>
+      </div>
+      <div class="card" id="settings-security">
+        <div class="section-kicker">04 · 安全与访问</div><h2>本地访问密码</h2>
+        <div class="field"><span>当前密码</span><input id="currentPassword" type="password" autocomplete="current-password"></div>
+        <div class="field"><span>新密码</span><input id="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="1024"></div>
+        <button class="btn" id="btnPassword">修改访问密码</button>
+        <div class="hint">至少 12 个字符；保存后其他登录会话失效。</div>
+      </div>
+      <div class="card">
+        <h2>本地连接信息</h2><p class="hint">关机后使用：<a href="https://yanzaitian.github.io/locator-workbench/" target="_blank" rel="noopener">打开云端工作台</a>。云端是否有新位置取决于小米授权和采集结果。</p>
+        <div class="hint" style="margin-top:0">本地访问需要这台电脑保持开机；临时公网隧道也会随关机停止。</div>
+        <div class="field"><span>公网</span><input id="publicUrl" readonly></div>
+        <div class="field"><span>局域网</span><input id="lanUrl" readonly></div>
+        <div class="field"><span>令牌</span><input id="tokenBox" type="password" readonly autocomplete="off" aria-label="本地连接令牌（已遮蔽）"></div>
+        <div class="row"><button class="btn sm" id="btnCopyUrl">复制公网地址</button><button class="btn sm" id="btnCopyToken">复制令牌</button></div>
+        <div class="hint" id="paths"></div>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+var state=null, currentPage="dash", currentDevice="";
+var INTERVALS=[5,10,15,20,30,45,60,120,180];
+var WEEKDAYS=[["1","周一"],["2","周二"],["3","周三"],["4","周四"],["5","周五"],["6","周六"],["7","周日"]];
+function $(id){return document.getElementById(id);}
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+function toast(m){var t=$("toast");t.textContent=m;t.className="toast show";clearTimeout(t._t);t._t=setTimeout(function(){t.className="toast";},2400);}
+var CSRF_TOKEN=document.querySelector('meta[name="csrf-token"]').content;
+async function api(p,o){
+  o=o||{};o.credentials="same-origin";
+  o.headers=Object.assign({},o.headers||{}, {"X-CSRF-Token":CSRF_TOKEN});
+  var r;
+  try{r=await fetch(p,o);}catch(e){throw new Error("无法连接本机工作台。请确认本机服务正在运行，再刷新页面；此错误不代表小米授权失效。");}
+  if(r.status===401){location.href="/login";throw new Error("工作台登录已过期或服务已重启，请重新登录工作台。这不代表小米账号退出。");}
+  var result;
+  try{result=await r.json();}catch(e){throw new Error("本机服务响应异常，请刷新页面重试。");}
+  if(!r.ok)throw new Error(result.error||"本机请求失败，请稍后重试。");
+  return result;
+}
+function ago(h){if(h==null)return "—";if(h<1/60)return "刚刚";if(h<1)return Math.round(h*60)+" 分钟前";if(h<48)return (Math.round(h*10)/10)+" 小时前";return (Math.round(h/24*10)/10)+" 天前";}
+function mapUrl(lat,lon){return "https://uri.amap.com/marker?position="+lon+","+lat+"&name="+encodeURIComponent("设备位置")+"&src=locator&coordinate=gaode&callnative=1";}
+function opt(v){var options=INTERVALS.slice();if(Number(v)>=5&&options.indexOf(Number(v))<0)options.push(Number(v));return options.map(function(x){return '<option value="'+x+'"'+(Number(v)===x?" selected":"")+">"+x+" 分钟</option>";}).join("");}
+
+function showPage(p){
+  if(!$("page-"+p))p="dash";
+  currentPage=p;
+  history.replaceState(null,"","#"+p);
+  var btns=document.querySelectorAll("#nav button");
+  for(var i=0;i<btns.length;i++) btns[i].className=btns[i].getAttribute("data-page")===p?"on":"";
+  var pages=document.querySelectorAll(".page");
+  for(var j=0;j<pages.length;j++) pages[j].className="page"+(pages[j].id==="page-"+p?" on":"");
+  var titles={dash:"仪表盘",devices:"设备",plan:"计划",reports:"月报",settings:"设置"};
+  $("pageTitle").textContent=titles[p]||"";
+}
+
+function devicePlan(d){try{var p=typeof d.plan_json==="string"?JSON.parse(d.plan_json||"{}"):d.plan_json;return p&&typeof p==="object"&&!Array.isArray(p)&&Object.keys(p).length?p:null;}catch(e){return null;}}
+function deviceKey(id){return encodeURIComponent(String(id)).replace(/'/g,"%27");}
+function devCardHTML(d){
+  var lp=d.last_point,on=Number(d.enabled),online=(Number(d.online)===1),custom=devicePlan(d),customOn=!!(custom&&custom.enabled!==false),customBase=custom&&custom["default"]||{},key=deviceKey(d.device_id);
+  var st=!on?"已关闭":(online?"在线":"离线"),sc=!on?"off":(online?"on2":"offline");
+  var loc=d.address||(lp?(lp.lat.toFixed(4)+", "+lp.lon.toFixed(4)):"暂无位置");
+  var upd=d.updated_at?new Date(d.updated_at.replace("Z","+00:00")).toLocaleString():(d.last_local||"未定位");
+  var ico=d.device_id.indexOf("earphone")>=0?"🎧":(d.device_id.indexOf("Tag")>=0?"🔖":"📱");
+  var interval=customOn?(customBase.interval_minutes||d.interval_minutes||60):(d.interval_minutes||60);
+  return '<div class="dev'+(on?"":" off")+'"><div class="top"><div class="ico">'+ico+'</div>'+ 
+    '<div style="min-width:0;flex:1"><div class="nm">'+esc(d.name||d.device_id)+'</div>'+ 
+    '<div class="tm">最后 '+esc(upd)+'</div></div>'+ 
+    '<span class="status '+sc+'">'+st+'</span></div>'+ 
+    '<div class="kv2"><span>电量 <b>'+(lp&&lp.battery!=null?Math.round(lp.battery)+"%":"—")+'</b>'+(d.charging?" ⚡":"")+'</span>'+ 
+    '<span>间隔 <b>'+interval+'分</b></span>'+ 
+    '<span>精度 <b>'+(d.accuracy!=null?Math.round(d.accuracy)+"米":"—")+'</b></span></div>'+ 
+    '<div class="addr">📍 '+esc(loc)+'</div>'+ 
+    '<div class="acts"><label class="switch"><input type="checkbox" '+(on?"checked":"")+ 
+    ' onchange="toggleDev(decodeURIComponent(\''+key+'\'),this.checked)"> 启用</label>'+ 
+    '<select data-role="interval" aria-label="定位间隔" style="width:88px" onchange="setIntervalDev(decodeURIComponent(\''+key+'\'),this.value)">'+opt(interval)+'</select>'+ 
+    '<button class="btn sm" onclick="syncDev(decodeURIComponent(\''+key+'\'))">立即定位</button>'+ 
+    (lp?'<button class="btn sm" onclick="openMap('+lp.gcj_lat+','+lp.gcj_lon+')">地图</button>':'')+ 
+    '</div><details class="device-plan"><summary>独立定位时段'+(customOn?' · 已启用':' · 跟随全局')+'</summary>'+ 
+    '<label class="switch"><input type="checkbox" data-role="plan-on" '+(customOn?'checked':'')+'> 使用本设备独立时段</label>'+ 
+    '<div class="planrow"><div class="nm">每日窗口</div><input type="time" data-role="plan-start" value="'+esc(customBase.start||((state&&state.schedule&&state.schedule.default&&state.schedule.default.start)||"08:00"))+'"><input type="time" data-role="plan-end" value="'+esc(customBase.end||((state&&state.schedule&&state.schedule.default&&state.schedule.default.end)||"22:00"))+'"></div>'+ 
+    '<div class="hint">窗口内按本设备间隔定位；关闭独立时段则继承全局周计划。</div>'+ 
+    '<button class="btn sm" onclick="saveDevicePlan(decodeURIComponent(\''+key+'\'),this.closest(\'.dev\'))">保存本设备时段</button></details></div>';
+}
+function render(){
+  if(!state)return;
+  var s=state.silence_hours, h="", txt="等待上报";
+  if(state.last){ if(s>state.alert_hours){h="bad";txt="失联 "+ago(s);} else if(s>2){h="warn";txt="较久未上报 "+ago(s);} else {h="ok";txt="在线 · "+ago(s);} }
+  else {h="";txt="等待上报";}
+  var pill=$("pill"); pill.className="chip "+h; pill.innerHTML="<i></i>"+esc(txt);
+  $("sideStatus").textContent=txt;
+  $("sideTime").textContent=state.server_time||"";
+  $("pageSub").textContent=(state.devices||[]).length+" 台设备 · "+(state.config?state.config.data_dir:"");
+  $("publicUrl").value=state.public_url||"（隧道未启动）";
+  $("lanUrl").value=state.lan_url||"";
+  $("tokenBox").value=state.token||"";
+  $("paths").textContent="配置文件："+(state.config?state.config.config_file:"");
+
+  var devs0=state.devices||[];
+  var online0=devs0.filter(function(x){return Number(x.online)===1&&Number(x.enabled);}).length;
+  $("summaryStrip").innerHTML=
+    '<div class="tile"><div class="l">设备总数</div><div class="v">'+devs0.length+'<small>台</small></div></div>'+
+    '<div class="tile"><div class="l">在线设备</div><div class="v" style="color:var(--ok)">'+online0+'<small>台</small></div></div>'+
+    '<div class="tile"><div class="l">今日定位</div><div class="v">'+state.counts.today+'<small>次</small></div></div>'+
+    '<div class="tile"><div class="l">最近上报</div><div class="v" style="font-size:19px">'+esc(state.last?state.last.local.slice(11,16):"—")+'<small>'+(state.last?ago(s):"")+'</small></div></div>';
+  $("dashDevGrid").innerHTML=devs0.length?devs0.map(devCardHTML).join(''):'<div class="muted">还没有设备，去「设备」页添加</div>';
+
+  var t=state.today||{};
+  $("planNow").textContent=t.in_window?"窗口内":"窗口外";
+  $("planNext").textContent="下次 "+(state.next_run||"—");
+  $("planReason").textContent=t.reason||"";
+  $("cToday").textContent=state.counts.today;
+  $("cWeek").textContent=state.counts.week;
+  $("cTotal").textContent=state.counts.total;
+  var on=(state.devices||[]).filter(function(d){return Number(d.enabled);}).length;
+  $("devOn").textContent=on;
+  $("devHint").textContent="共 "+(state.devices||[]).length+" 台";
+
+  // 设备卡片
+  var grid=$("devGrid");
+  grid.innerHTML=(state.devices||[]).length?state.devices.map(devCardHTML).join(""):'<div class="muted">还没有设备</div>';
+
+  // 近7天表
+  var tb=$("days").querySelector("tbody"); tb.innerHTML="";
+  (state.days||[]).slice().reverse().forEach(function(d){
+    tb.innerHTML+="<tr><td>"+esc(d.date)+"</td><td>"+d.points+"</td><td>"+esc(d.first)+"</td><td>"+esc(d.last)+"</td><td>"+d.distance_km+" km</td></tr>";
+  });
+  if(!(state.days||[]).length) tb.innerHTML='<tr><td colspan="5" class="muted">暂无数据</td></tr>';
+
+  // 月报
+  var rl=$("reportList"); rl.innerHTML="";
+  (state.reports||[]).forEach(function(r){
+    var b=document.createElement("div"); b.className="repcard";
+    b.innerHTML="<b>"+esc(r.month)+"</b><span>"+r.versions+" 个版本</span>";
+    b.onclick=function(){loadReport(r.month);};
+    rl.appendChild(b);
+  });
+  if(!(state.reports||[]).length) rl.innerHTML='<span class="muted">还没有月报</span>';
+
+  if(state.schedule && !state._planRendered){renderPlan();state._planRendered=true;}
+  $("planUpdated").textContent=state.schedule_updated?"上次保存："+new Date(state.schedule_updated.replace("Z","+00:00")).toLocaleString():"";
+}
+function openMap(lat,lon){window.open(mapUrl(lat,lon),"_blank");}
+
+function renderPlan(){
+  var s=state.schedule;
+  $("schedEnabled").checked=!!s.enabled; $("skipHolidays").checked=!!s.skip_holidays;
+  $("default-start").value=s["default"].start; $("default-end").value=s["default"].end;
+  $("default-intv").innerHTML=opt(s["default"].interval_minutes);
+  $("holiday-start").value=s.holiday_workday.start; $("holiday-end").value=s.holiday_workday.end;
+  $("holiday-intv").innerHTML=opt(s.holiday_workday.interval_minutes);
+  var box=$("weekdayRows"); box.innerHTML="";
+  WEEKDAYS.forEach(function(w){
+    var wd=w[0], c=s.days&&s.days[wd], p=c||s["default"];
+    var d=document.createElement("div"); d.className="planrow"+(c?"":" dim");
+    d.innerHTML='<div class="nm">'+w[1]+'</div>'+
+      '<label class="switch"><input type="checkbox" id="ov'+wd+'"'+(c?" checked":"")+'> 单独</label>'+
+      '<input type="time" id="wd'+wd+'-start" value="'+esc(p.start)+'"'+(c?"":" disabled")+'>'+
+      '<input type="time" id="wd'+wd+'-end" value="'+esc(p.end)+'"'+(c?"":" disabled")+'>'+
+      '<select id="wd'+wd+'-intv"'+(c?"":" disabled")+'>'+opt(p.interval_minutes)+'</select>';
+    box.appendChild(d);
+    $("ov"+wd).onchange=function(){
+      var on=this.checked; d.className="planrow"+(on?"":" dim");
+      ["-start","-end","-intv"].forEach(function(x){var e=$("wd"+wd+x);if(e)e.disabled=!on;});
+      if(on){$("wd"+wd+"-start").value=$("default-start").value;$("wd"+wd+"-end").value=$("default-end").value;$("wd"+wd+"-intv").value=$("default-intv").value;}
+    };
+  });
+  $("holidaysText").value=(state.holidays.statutory||[]).join("\n");
+  $("workdaysText").value=(state.holidays.workdays||[]).join("\n");
+}
+function readPlan(p){return {enabled:true,start:$(p+"-start").value||"08:00",end:$(p+"-end").value||"22:00",interval_minutes:parseInt($(p+"-intv").value||"60",10)};}
+function collectSchedule(){var s={enabled:$("schedEnabled").checked,skip_holidays:$("skipHolidays").checked,"default":readPlan("default"),holiday_workday:readPlan("holiday"),days:{}};
+  WEEKDAYS.forEach(function(w){if($("ov"+w[0]).checked)s.days[w[0]]=readPlan("wd"+w[0]);});return s;}
+function dates(t){return t.split(/[\s,，、;；]+/).map(function(x){return x.trim();}).filter(function(x){return /^\d{4}-\d{2}-\d{2}$/.test(x);});}
+function savePlan(){
+  var payload={schedule:collectSchedule(),holidays:{statutory:dates($("holidaysText").value),workdays:dates($("workdaysText").value)},push:true};
+  api("/api/schedule",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}).then(function(d){
+    toast(d.ok?"计划已保存"+(d.push==="sent"?"，已下发手机":""):"保存失败"); state._planRendered=false; refresh();
+  });
+}
+function applyRecommend(){
+  $("schedEnabled").checked=true;$("skipHolidays").checked=true;
+  $("default-start").value="06:00";$("default-end").value="23:59";$("default-intv").value="60";
+  ["6","7"].forEach(function(wd){var o=$("ov"+wd);if(o&&!o.checked){o.checked=true;o.onchange.apply(o);}
+    $("wd"+wd+"-start").value="00:00";$("wd"+wd+"-end").value="23:59";$("wd"+wd+"-intv").value="20";});
+  toast("已填入推荐值，点保存生效");
+}
+function saveDevicePlan(id,card){
+  var enabled=card.querySelector('[data-role="plan-on"]').checked;
+  var old=(state.devices||[]).find(function(d){return d.device_id===id;})||{};
+  var value=enabled?(devicePlan(old)||{enabled:true,skip_holidays:false,days:{}}):{};
+  if(enabled){value.enabled=true;value["default"]={enabled:true,start:card.querySelector('[data-role="plan-start"]').value,end:card.querySelector('[data-role="plan-end"]').value,interval_minutes:parseInt(card.querySelector('[data-role="interval"]').value,10)};}
+  api("/api/device/update",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({device_id:id,plan_json:value})}).then(function(d){toast(d.ok?"本设备时段已保存":"保存失败："+(d.error||""));refresh();});
+}
+function toggleDev(id,on){api("/api/device/update",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({device_id:id,enabled:!!on})}).then(refresh);}
+function setIntervalDev(id,v){var d=(state.devices||[]).find(function(x){return x.device_id===id;}),p=devicePlan(d||{}),payload={device_id:id};if(p&&p.enabled!==false&&p["default"]){p["default"].interval_minutes=parseInt(v,10);payload.plan_json=p;}else payload.interval_minutes=parseInt(v,10);api("/api/device/update",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}).then(function(){toast("间隔已更新");refresh();});}
+function syncDev(id){toast("正在向小米云端请求最新定位…");api("/api/xiaomi/sync",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({device_id:id})}).then(function(d){toast(d.ok?"已更新":"失败："+(d.error||""));refresh();});}
+function syncAll(){toast("正在刷新全部设备…");api("/api/xiaomi/sync",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).then(function(d){toast(d.ok?"已刷新 "+d.updated.length+" 台":"失败："+(d.error||""));refresh();});}
+function genReport(){
+  var m=$("reportMonth").value; if(!m){toast("请选择月份");return;}
+  var b=$("btnGenReport"); b.disabled=true; toast("正在生成 "+m+" 月报…");
+  api("/api/report",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({month:m})}).then(function(d){
+    b.disabled=false; if(!d.ok){toast("失败："+(d.error||""));return;}
+    $("reportContent").textContent=d.content||""; toast("已生成（"+d.source+"）"); refresh();
+  });
+}
+function loadReport(m){api("/api/report?month="+encodeURIComponent(m)).then(function(d){if(!d.ok){toast("读取失败");return;}$("reportMonth").value=m;$("reportContent").textContent=d.content||"";toast("已加载 "+m);});}
+function loadSettings(){
+  api("/api/settings").then(function(d){ if(!d.ok)return; var s=d.settings;
+    $("xmAccountStatus").textContent=s.xiaomi&&s.xiaomi.credentials_saved?"已保存本地授权凭据 · 有效性以刷新定位结果为准；如提示授权失败，请重新扫码。":"尚未保存完整的小米授权，请点击下方扫码登录。";
+    var sources=s.location_sources||{direct:true,mail:true};
+    $("sourceDirect").checked=sources.direct!==false; $("sourceMail").checked=sources.mail!==false;
+    $("sourceStatus").textContent="直接查询："+(sources.direct!==false?"已启用，连接状态见上方授权区":"已停用自动查询")+"；邮箱："+(sources.mail===false?"已停用":s.imap.enabled&&s.imap.host&&s.imap.user&&s.imap.password_set?"已配置，实际收件结果以采集记录为准":"尚未完成邮箱配置");
+    $("imapHost").value=s.imap.host||""; $("smtpHost").value=s.smtp.host||"";
+    $("imapUser").value=s.imap.user||""; $("imapPass").placeholder=s.imap.password_set?"已设置，留空不改":"授权码";
+    $("imapSubject").value=s.imap.subject_contains||"GPS";
+    $("dsKey").placeholder=s.deepseek.api_key_set?"已设置（尾号 "+s.deepseek.api_key_tail+"）":"sk-...";
+    $("dsModel").value=s.deepseek.model||"deepseek-chat";
+    $("alertHours").value=s.alert.max_silence_hours; $("autoReport").checked=!!s.auto_report.enabled;
+  });
+}
+function saveSettings(){
+  if(!$("sourceDirect").checked&&!$("sourceMail").checked){toast("请至少启用一种获取方式");return;}
+  var p={location_sources:{direct:$("sourceDirect").checked,mail:$("sourceMail").checked},imap:{enabled:$("sourceMail").checked,host:$("imapHost").value.trim(),user:$("imapUser").value.trim(),password:$("imapPass").value,subject_contains:$("imapSubject").value.trim()},
+    smtp:{host:$("smtpHost").value.trim(),user:$("imapUser").value.trim(),password:$("imapPass").value},
+    deepseek:{api_key:$("dsKey").value.trim(),model:$("dsModel").value.trim()},
+    alert:{max_silence_hours:parseFloat($("alertHours").value||"6")},
+    auto_report:{enabled:$("autoReport").checked}};
+  api("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)}).then(function(d){toast(d.ok?"已保存":"失败");loadSettings();refresh();});
+}
+var xmQrGeneration=0,xmQrTimer=null;
+async function xmQr(){
+  var generation=++xmQrGeneration;clearTimeout(xmQrTimer);
+  $("btnXmQr").disabled=true;$("xmQrBox").style.display="none";toast("正在生成二维码…");
+  try{
+    var d=await api("/api/xiaomi/qr",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    if(generation!==xmQrGeneration)return;
+    if(!d.ok)throw new Error(d.error||"请稍后重试");
+    $("xmQrBox").style.display="block";
+    $("xmQrImg").onerror=function(){if(generation===xmQrGeneration)$("xmQrTip").textContent="小米二维码图片加载失败，请检查网络后重新生成。这不代表已保存授权失效。";};
+    $("xmQrImg").src=d.qr;$("xmQrTip").textContent=d.tips||"请用小米手机扫码并确认授权";
+    var attempts=0,connectionFailures=0,deadline=Date.now()+5*60*1000;
+    async function poll(){
+      if(generation!==xmQrGeneration)return;
+      if(Date.now()>=deadline){$("xmQrTip").textContent="二维码等待已超时，请重新生成；已保存的授权不会被清除。";return;}
+      try{
+        var r=await api("/api/xiaomi/qr/poll",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ticket:d.ticket})});
+        if(generation!==xmQrGeneration)return;
+        connectionFailures=0;
+        if(r.ok){$("xmQrBox").style.display="none";toast("扫码成功，已加入 "+r.devices+" 台设备");loadSettings();refresh();return;}
+        if(r.status&&r.status!=="waiting"){$("xmQrTip").textContent=r.status==="expired"?"二维码已过期，请重新点击扫码登录。":r.status+"，请重新扫码或稍后重试。";loadSettings();return;}
+        if(++attempts>=60){$("xmQrTip").textContent="等待已超时，请重新点击扫码登录。";return;}
+        xmQrTimer=setTimeout(poll,2500);
+      }catch(e){
+        if(generation!==xmQrGeneration)return;
+        connectionFailures++;
+        $("xmQrTip").textContent=e.message+(connectionFailures<3?" 正在重试连接…":" 请恢复本机服务后重新生成二维码。");
+        if(connectionFailures<3)xmQrTimer=setTimeout(poll,2500);
+      }
+    }
+    xmQrTimer=setTimeout(poll,2500);
+  }catch(e){if(generation===xmQrGeneration)toast("生成二维码失败："+e.message);}
+  finally{if(generation===xmQrGeneration)$("btnXmQr").disabled=false;}
+}
+function xmLogin(){
+  var u=$("xmUser").value.trim(),p=$("xmPass").value;
+  if(!u||!p){toast("请输入账号密码，或点扫码登录");return;}
+  toast("正在登录…");
+  api("/api/xiaomi/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})}).then(function(d){
+    if(!d.ok){toast("失败："+(d.error||""));return;}
+    $("xmPass").value=""; toast("成功，"+d.devices.length+" 台设备"); loadSettings(); refresh();
+  });
+}
+function xmCookie(){
+  var c=$("xmCookie").value.trim(); if(!c){toast("请粘贴 Cookie");return;}
+  api("/api/xiaomi/cookie",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cookie:c})}).then(function(d){
+    toast(d.ok?"成功，"+d.devices+" 台设备":"失败："+(d.error||"")); if(d.ok){$("xmCookie").value="";loadSettings();} refresh();
+  });
+}
+function copy(t){if(navigator.clipboard){navigator.clipboard.writeText(t).then(function(){toast("已复制");});}}
+
+function refresh(){
+  api("/api/state").then(function(d){state=d;render();}).catch(function(){$("pill").className="chip bad";$("pill").innerHTML="<i></i>服务未启动";});
+}
+document.addEventListener("DOMContentLoaded",function(){
+  showPage(location.hash.slice(1)||"dash");
+  $("btnGoXmAccount").onclick=function(){showPage("settings");$("xiaomi-account").scrollIntoView({block:"start"});};
+  document.querySelectorAll("[data-settings-target]").forEach(function(b){b.onclick=function(){$(b.dataset.settingsTarget).scrollIntoView({block:"start",behavior:"smooth"});};});
+  var btns=document.querySelectorAll("#nav button");
+  for(var i=0;i<btns.length;i++){btns[i].onclick=function(){showPage(this.getAttribute("data-page"));};}
+  var d=new Date(); var prev=new Date(d.getFullYear(),d.getMonth()-1,1);
+  $("reportMonth").value=prev.getFullYear()+"-"+String(prev.getMonth()+1).padStart(2,"0");
+  $("btnSavePlan").onclick=savePlan; $("btnRecommend").onclick=applyRecommend;
+  $("btnPassword").onclick=function(){api("/api/auth/password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({current_password:$("currentPassword").value,password:$("newPassword").value})}).then(function(d){if(d.ok){$("currentPassword").value="";$("newPassword").value="";location.reload();}else toast(d.error||"修改失败");});};
+  $("btnLogout").onclick=function(){api("/api/auth/logout",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).then(function(){location.href="/login";});};
+  $("btnGenReport").onclick=genReport;
+  $("btnExport").onclick=function(){window.open("/api/report/export?month="+encodeURIComponent($("reportMonth").value||""),"_blank");};
+  $("btnSaveSettings").onclick=saveSettings;
+  $("btnXmCheck").onclick=async function(){
+    var button=$("btnXmCheck");button.disabled=true;$("xmAccountStatus").textContent="正在验证小米会话…";
+    try{var result=await api("/api/xiaomi/check",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+      $("xmAccountStatus").textContent=result.connected?"本次检查连接成功 · 仅表示当前有效，不保证授权持续时间。":result.credentials_saved?"已保存凭据，但当前连接失败（"+(result.diagnostic||"未知原因")+"）。历史位置仍保留；当前无法获得新位置。":"尚未保存小米授权，请先登录。";
+    }catch(e){$("xmAccountStatus").textContent="检查失败，请确认本地服务和网络连接。";}finally{button.disabled=false;}
+  };
+  $("btnSaveSources").onclick=function(){
+    var sources={direct:$("sourceDirect").checked,mail:$("sourceMail").checked};
+    if(!sources.direct&&!sources.mail){toast("请至少启用一种获取方式");return;}
+    api("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({location_sources:sources,imap:{enabled:sources.mail}})}).then(function(d){toast(d.ok?"获取方式已保存到本机":d.error||"保存失败");loadSettings();}).catch(function(){toast("连接失败，请重试");});
+  };
+  $("btnXmQr").onclick=xmQr; $("btnXmLogin").onclick=xmLogin; $("btnXmCookie").onclick=xmCookie;
+  $("btnXmSync").onclick=syncAll; var ra=$("btnRefreshAll"); if(ra) ra.onclick=syncAll;
+  $("btnCopyUrl").onclick=function(){copy($("publicUrl").value);};
+  $("btnCopyToken").onclick=function(){copy($("tokenBox").value);};
+  refresh(); loadSettings(); setInterval(refresh,30000);
+});
+</script>
+</body>
+</html>
