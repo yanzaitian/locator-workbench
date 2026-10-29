@@ -618,7 +618,7 @@ def test_main_real_mail_import_after_disabled_or_failed_direct(monkeypatch, tmp_
 
 
 @pytest.mark.parametrize("present", [(), ("XM_TOKEN",), ("XM_UID",)])
-def test_mail_still_imports_when_direct_credentials_are_missing(monkeypatch, tmp_path, present):
+def test_mail_still_imports_when_direct_credentials_are_missing(monkeypatch, tmp_path, present, capsys):
     from cloud import fetch, health_check
     password = "synthetic-mail-pipeline-password"
     monkeypatch.chdir(tmp_path)
@@ -642,6 +642,10 @@ def test_mail_still_imports_when_direct_credentials_are_missing(monkeypatch, tmp
     assert result["sources"]["direct"] == {
         "enabled": True, "status": "error", "error": "missing_required_secrets"}
     assert result["sources"]["mail"]["status"] == "ok"
+    output = capsys.readouterr().out
+    assert "COLLECTOR_DIRECT=error:missing_required_secrets" in output
+    assert "COLLECTOR_MAIL=ok" in output
+    assert SECRET not in output and ACCOUNT not in output
     assert result["error"]
     with pytest.raises(health_check.HealthCheckError, match="STATE_HAS_ERROR"):
         health_check.validate_state(result)
